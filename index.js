@@ -6,8 +6,8 @@ const cookieParser = require("cookie-parser");
 require("dotenv").config();
 const verifyJWT = require("./verifyJWT");
 const jsonwebtoken = require("jsonwebtoken");
+
 const app = express();
-app.use(cors());
 app.use(express.json());
 app.use(cookieParser());
 
@@ -45,54 +45,34 @@ async function run() {
     app.post("/users", async (req, res) => {
       const user = req.body;
 
-      // hash the password
-      const hashedPassword = await bcrypt.hash(user.password, 10);
+      const existingUser = await userCollection.findOne({ email: user.email });
+      if (existingUser) {
+        return res.status(400).json({ message: "User already exists" });
+      }
 
-      // Replace plain password with hashed one
-      user.password = hashedPassword;
       const result = await userCollection.insertOne(user);
-      res.send(result);
-    });
-    //
-    //
-    // verify users via jwt
-    app.post("/login", async (req, res) => {
-      const { email, password } = req.body;
-      // authenticate user
-      const user = await userCollection.findOne({ email });
 
-      if (!user) {
-        return res.status(401).send("Invalid credentials");
-      }
-
-      // compare hashed password
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        return res.status(401).send("Invalid credentials");
-      }
-
-      // Generate a JWT token
+      // generate jwt
       const token = jsonwebtoken.sign(
-        { id: user._id, email: user.email },
+        { email: user.email },
         process.env.JWT_SECRET,
         { expiresIn: "1h" }
       );
 
-      // set the token in an HTTP-only cookie
       res.cookie("token", token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
-        sameSite: "strict",
-        maxAge: 3600 * 1000,
       });
-      res.status(200).send({ message: "Logged in Successfully" });
+
+      res.send({
+        message: "User created successfully",
+        user: { email: user.email },
+      });
     });
 
     // get user data
     app.get("/user", verifyJWT, async (req, res) => {
-      const userId = req.user.id;
-
-      const user = await userCollection.findOne({ _id: userId });
+      const user = await userCollection.findOne({ email: req.user.email });
       if (!user) {
         return res.status(404).json({ message: "user not found" });
       }
