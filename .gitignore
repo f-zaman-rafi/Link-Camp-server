@@ -1,19 +1,2 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# OS-specific files
-.DS_Store
-Thumbs.db
-
-# IDE-specific files
-.vscode/
-.idea/
-*.swp
-
-# Build files
-dist/
-build/".env" 
+.env
+node_modules
