@@ -17,7 +17,6 @@ app.use(
     credentials: true,
   })
 );
-
 //
 //
 //
@@ -58,6 +57,7 @@ async function run() {
         process.env.JWT_SECRET,
         { expiresIn: "1h" }
       );
+      // console.log("JWT during sign-up:", token);
 
       res.cookie("token", token, {
         httpOnly: true,
@@ -68,6 +68,44 @@ async function run() {
         message: "User created successfully",
         user: { email: user.email },
       });
+    });
+
+    // jwt verify when login
+    app.post("/login", async (req, res) => {
+      const { email } = req.body;
+      try {
+        const user = await userCollection.findOne({ email });
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        // Generate jwt token
+        const token = jsonwebtoken.sign(
+          { email: user.email },
+          process.env.JWT_SECRET,
+          { expiresIn: "1h" }
+        );
+
+        console.log("JWT during sign-up:", token);
+
+        res.cookie("token", token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+        });
+        res.status(200).json({ message: "Login successful", token });
+      } catch (error) {
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    // clear cookies when logout
+    app.post("/logout", (req, res) => {
+      res.clearCookie("token", {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+      });
+      res.status(200).send({ message: "Logged out successfully" });
     });
 
     // get user data
