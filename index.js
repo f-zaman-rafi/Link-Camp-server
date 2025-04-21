@@ -38,8 +38,7 @@ async function run() {
     await client.connect();
 
     const userCollection = client.db("linkcamp").collection("users");
-    //
-    //
+
     // store users data to userCollection
     app.post("/users", async (req, res) => {
       const user = req.body;
@@ -109,12 +108,19 @@ async function run() {
     });
 
     // get user data
-    app.get("/user", verifyJWT, async (req, res) => {
-      const user = await userCollection.findOne({ email: req.user.email });
+    app.get("/user/:email", verifyJWT(userCollection), async (req, res) => {
+      const email = req.params.email;
+      const user = await userCollection.findOne({ email });
       if (!user) {
-        return res.status(404).json({ message: "user not found" });
+        return res.status(404).json({ message: "User not found" });
       }
       res.status(200).json(user);
+    });
+
+    // Admin Access
+    app.get("/admin", verifyJWT(userCollection, "Admin"), async (req, res) => {
+      // If the user is authenticated and has the "admin" role, proceed with the request
+      res.json({ message: "Welcome, Admin!" });
     });
 
     //
