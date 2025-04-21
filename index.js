@@ -6,6 +6,7 @@ const cookieParser = require("cookie-parser");
 require("dotenv").config();
 const verifyJWT = require("./verifyJWT");
 const jsonwebtoken = require("jsonwebtoken");
+const verifyAdminJWT = require("./verifyAdminJWT");
 
 const app = express();
 app.use(express.json());
@@ -42,13 +43,11 @@ async function run() {
     // store users data to userCollection
     app.post("/users", async (req, res) => {
       const user = req.body;
-
       const existingUser = await userCollection.findOne({ email: user.email });
       if (existingUser) {
         return res.status(400).json({ message: "User already exists" });
       }
-
-      const result = await userCollection.insertOne(user);
+      await userCollection.insertOne(user);
 
       // generate jwt
       const token = jsonwebtoken.sign(
@@ -56,7 +55,6 @@ async function run() {
         process.env.JWT_SECRET,
         { expiresIn: "1h" }
       );
-      // console.log("JWT during sign-up:", token);
 
       res.cookie("token", token, {
         httpOnly: true,
@@ -84,8 +82,6 @@ async function run() {
           process.env.JWT_SECRET,
           { expiresIn: "1h" }
         );
-
-        console.log("JWT during sign-up:", token);
 
         res.cookie("token", token, {
           httpOnly: true,
@@ -117,11 +113,21 @@ async function run() {
       res.status(200).json(user);
     });
 
+    // get all user data for admin
+    app.get(
+      "/admin/users",
+      verifyAdminJWT(userCollection, ["admin"]),
+      async (req, res) => {
+        const users = await userCollection.find().toArray();
+        res.json(users);
+      }
+    );
+
     // Admin Access
-    app.get("/admin", verifyJWT(userCollection, "Admin"), async (req, res) => {
-      // If the user is authenticated and has the "admin" role, proceed with the request
-      res.json({ message: "Welcome, Admin!" });
-    });
+    // app.get("/admin", verifyJWT(userCollection, "Admin"), async (req, res) => {
+    //   // If the user is authenticated and has the "admin" role, proceed with the request
+    //   res.json({ message: "Welcome, Admin!" });
+    // });
 
     //
     //

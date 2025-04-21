@@ -1,6 +1,6 @@
 const jwt = require("jsonwebtoken");
 
-const verifyRoleJWT =
+const verifyAdminJWT =
   (userCollection, requireRole) => async (req, res, next) => {
     const token = req.cookies.token;
 
@@ -24,16 +24,22 @@ const verifyRoleJWT =
           return res.status(404).json({ message: "User not found" });
         }
 
-        // check if user has the require role
-        if (requireRole && user.userType !== requireRole) {
-          return res.status(403).json({ message: "Insufficient permissions" });
+        // Check if user has the required role (can be one role or multiple)
+        if (requireRole && !requireRole.includes(user.userType)) {
+          return res
+            .status(403)
+            .json({
+              message:
+                "User does not have the required role to access this resource",
+            });
         }
-        req.user = decoded;
-        next();
+
+        req.user = decoded; // Store decoded user in the request
+        next(); // Proceed to the next middleware or route handler
       } catch (error) {
         return res.status(500).json({ message: "Server error" });
       }
     });
   };
 
-module.exports = verifyRoleJWT;
+module.exports = verifyAdminJWT;
