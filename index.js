@@ -7,6 +7,7 @@ require("dotenv").config();
 const verifyJWT = require("./verifyJWT");
 const jsonwebtoken = require("jsonwebtoken");
 const verifyAdminJWT = require("./verifyAdminJWT");
+const { ObjectId } = require("mongodb");
 
 const app = express();
 app.use(express.json());
@@ -53,7 +54,7 @@ async function run() {
       const token = jsonwebtoken.sign(
         { email: user.email },
         process.env.JWT_SECRET,
-        { expiresIn: "1h" }
+        { expiresIn: "7d" }
       );
 
       res.cookie("token", token, {
@@ -80,7 +81,7 @@ async function run() {
         const token = jsonwebtoken.sign(
           { email: user.email },
           process.env.JWT_SECRET,
-          { expiresIn: "1h" }
+          { expiresIn: "7d" }
         );
 
         res.cookie("token", token, {
@@ -123,12 +124,66 @@ async function run() {
       }
     );
 
-    // Admin Access
-    // app.get("/admin", verifyJWT(userCollection, "Admin"), async (req, res) => {
-    //   // If the user is authenticated and has the "admin" role, proceed with the request
-    //   res.json({ message: "Welcome, Admin!" });
-    // });
+    // Update user verification status
+    app.patch(
+      "/admin/users/:id",
+      verifyAdminJWT(userCollection, ["admin"]),
+      async (req, res) => {
+        const { id } = req.params;
+        const { verify } = req.body;
 
+        try {
+          // Validate ObjectId
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid user ID" });
+          }
+
+          // Update user status
+          const result = await userCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { verify } }
+          );
+
+          if (result.matchedCount === 0) {
+            return res.status(404).json({ message: "User not found" });
+          }
+
+          res.status(200).json({ message: "User status updated successfully" });
+        } catch (error) {
+          console.error("Error updating user status:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
+    //  update user name
+
+    app.patch("/user/name", verifyJWT(userCollection), async (req, res) => {
+      const { email } = req.user; // Extract email from the verified token
+      const { name } = req.body;
+
+      if (!name) {
+        return res.status(400).json({ message: "Name is required" });
+      }
+
+      try {
+        const result = await userCollection.updateOne(
+          { email },
+          { $set: { name } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        res.status(200).json({ message: "Name updated successfully" });
+      } catch (error) {
+        console.error("Error updating name:", error.message);
+        res.status(500).json({ message: "Server error", error: error.message });
+      }
+    });
     //
     //
     //
