@@ -8,6 +8,9 @@ const verifyJWT = require("./verifyJWT");
 const jsonwebtoken = require("jsonwebtoken");
 const verifyAdminJWT = require("./verifyAdminJWT");
 const { ObjectId } = require("mongodb");
+const multer = require("multer");
+const cloudinary = require("cloudinary").v2;
+const { CloudinaryStorage } = require("multer-storage-cloudinary");
 
 const app = express();
 app.use(express.json());
@@ -33,6 +36,24 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   },
 });
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: "linkcamp_uploads",
+    allowed_formats: ["jpg", "png", "jpeg", "webp"],
+  },
+});
+
+const upload = multer({ storage });
+
+module.exports = upload;
 
 async function run() {
   try {
@@ -161,7 +182,7 @@ async function run() {
     //  update user name
 
     app.patch("/user/name", verifyJWT(userCollection), async (req, res) => {
-      const { email } = req.user; // Extract email from the verified token
+      const { email } = req.user;
       const { name } = req.body;
 
       if (!name) {
@@ -184,6 +205,43 @@ async function run() {
         res.status(500).json({ message: "Server error", error: error.message });
       }
     });
+
+    // update user photo
+
+    app.post(
+      "/user/upload-photo",
+      verifyJWT(userCollection),
+      upload.single("photo"),
+      async (req, res) => {
+        const { email } = req.user; // Extract email from the verified token
+        const photoUrl = req.file.path; // Cloudinary URL from the uploaded file
+
+        if (!photoUrl) {
+          return res.status(400).json({ message: "Photo upload failed" });
+        }
+
+        try {
+          const result = await userCollection.updateOne(
+            { email },
+            { $set: { photo: photoUrl } }
+          );
+
+          if (result.matchedCount === 0) {
+            return res.status(404).json({ message: "User not found" });
+          }
+
+          res
+            .status(200)
+            .json({ message: "Photo uploaded successfully", photoUrl });
+        } catch (error) {
+          console.error("Error uploading photo:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
     //
     //
     //
