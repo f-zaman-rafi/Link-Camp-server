@@ -322,6 +322,102 @@ async function run() {
       }
     });
 
+    // Add or update a vote
+    app.post("/votes", verifyJWT(userCollection), async (req, res) => {
+      const { postId, voteType } = req.body;
+      const { email } = req.user;
+
+      try {
+        const existingVote = await voteCollection.findOne({
+          postId,
+          userEmail: email,
+        });
+
+        if (existingVote) {
+          if (existingVote.voteType === voteType) {
+            await voteCollection.deleteOne({ _id: existingVote._id });
+            return res.status(200).json({ message: "Vote removed" });
+          } else {
+            await voteCollection.updateOne(
+              { _id: existingVote._id },
+              { $set: { voteType } }
+            );
+            return res.status(200).json({ message: "Vote updated" });
+          }
+        } else {
+          await voteCollection.insertOne({
+            postId,
+            userEmail: email,
+            voteType,
+          });
+          return res.status(201).json({ message: "Vote added" });
+        }
+      } catch (error) {
+        console.error("Error handling vote:", error.message);
+        res.status(500).json({ message: "Server error", error: error.message });
+      }
+    });
+
+    // Get all votes
+    app.get("/votes", verifyJWT(userCollection), async (req, res) => {
+      const { email } = req.user; // Get the user's email from the verified token
+
+      try {
+        const votes = await voteCollection.find({ userEmail: email }).toArray(); // Fetch all votes by the user
+        res.status(200).json(votes);
+      } catch (error) {
+        console.error("Error fetching votes:", error.message);
+        res.status(500).json({ message: "Server error", error: error.message });
+      }
+    });
+
+    // Get total upvotes and downvotes for a post
+    app.get("/votes/:postId", async (req, res) => {
+      const { postId } = req.params;
+
+      try {
+        const upvotes = await voteCollection.countDocuments({
+          postId,
+          voteType: "upvote",
+        });
+        const downvotes = await voteCollection.countDocuments({
+          postId,
+          voteType: "downvote",
+        });
+
+        res.status(200).json({ upvotes, downvotes });
+      } catch (error) {
+        console.error("Error fetching votes:", error.message);
+        res.status(500).json({ message: "Server error", error: error.message });
+      }
+    });
+
+    // Get total upvotes and downvotes for all posts
+    app.get("/voteCounts", async (req, res) => {
+      try {
+        const voteCounts = await voteCollection
+          .aggregate([
+            {
+              $group: {
+                _id: "$postId",
+                upvotes: {
+                  $sum: { $cond: [{ $eq: ["$voteType", "upvote"] }, 1, 0] },
+                },
+                downvotes: {
+                  $sum: { $cond: [{ $eq: ["$voteType", "downvote"] }, 1, 0] },
+                },
+              },
+            },
+          ])
+          .toArray();
+
+        res.status(200).json(voteCounts);
+      } catch (error) {
+        console.error("Error fetching vote counts:", error.message);
+        res.status(500).json({ message: "Server error", error: error.message });
+      }
+    });
+
     //
     //
     //
