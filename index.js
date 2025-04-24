@@ -66,6 +66,11 @@ async function run() {
     // collection to store posts
     const postCollection = client.db("linkcamp").collection("posts");
 
+    // collection to store posts
+    const announcementCollection = client
+      .db("linkcamp")
+      .collection("announcements");
+
     // collection to store votes
     const voteCollection = client.db("linkcamp").collection("votes");
 
@@ -288,12 +293,85 @@ async function run() {
       }
     );
 
+    // announcement post functionality
+
+    app.post(
+      "/teacher/announcement",
+      verifyJWT(userCollection),
+      upload.single("photo"),
+      async (req, res) => {
+        const { email } = req.user;
+        const { content } = req.body;
+        const photoURL = req.file ? req.file.path : null;
+
+        if (!content && !photoURL) {
+          return res
+            .status(400)
+            .json({ message: "Either content or photo is required" });
+        }
+
+        try {
+          const post = {
+            email,
+            content: content || null,
+            photo: photoURL || null,
+            createdAt: new Date(),
+          };
+          const result = await announcementCollection.insertOne(post);
+
+          res.status(201).json({
+            message: "announcement Created Successfully",
+            postId: result.insertedId,
+          });
+        } catch (error) {
+          console.error("Error creating announcement:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
     // get post data
 
     app.get("/posts", async (req, res) => {
       try {
         // Fetch all posts from postCollection
         const posts = await postCollection.find().toArray();
+
+        // Fetch user data for each post
+        const combinedData = await Promise.all(
+          posts.map(async (post) => {
+            const user = await userCollection.findOne({ email: post.email });
+
+            if (!user) {
+              throw new Error(`User not found for email: ${post.email}`);
+            }
+
+            return {
+              ...post,
+              user: {
+                name: user.name,
+                photo: user.photo,
+                user_type: user.userType,
+              },
+            };
+          })
+        );
+
+        res.status(200).json(combinedData);
+      } catch (error) {
+        console.error("Error fetching posts:", error.message);
+        res.status(500).json({ message: "Server error", error: error.message });
+      }
+    });
+
+    // get announcement data
+
+    app.get("/announcements", async (req, res) => {
+      try {
+        // Fetch all posts from postCollection
+        const posts = await announcementCollection.find().toArray();
 
         // Fetch user data for each post
         const combinedData = await Promise.all(
