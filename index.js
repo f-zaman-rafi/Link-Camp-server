@@ -60,7 +60,14 @@ async function run() {
     // Connect the client to the server
     await client.connect();
 
+    // collection to store users data
     const userCollection = client.db("linkcamp").collection("users");
+
+    // collection to store posts
+    const postCollection = client.db("linkcamp").collection("posts");
+
+    // collection to store votes
+    const voteCollection = client.db("linkcamp").collection("votes");
 
     // store users data to userCollection
     app.post("/users", async (req, res) => {
@@ -241,6 +248,79 @@ async function run() {
         }
       }
     );
+
+    // user post functionality
+
+    app.post(
+      "/user/post",
+      verifyJWT(userCollection),
+      upload.single("photo"),
+      async (req, res) => {
+        const { email } = req.user;
+        const { content } = req.body;
+        const photoURL = req.file ? req.file.path : null;
+
+        if (!content && !photoURL) {
+          return res
+            .status(400)
+            .json({ message: "Either content or photo is required" });
+        }
+
+        try {
+          const post = {
+            email,
+            content: content || null,
+            photo: photoURL || null,
+            createdAt: new Date(),
+          };
+          const result = await postCollection.insertOne(post);
+
+          res.status(201).json({
+            message: "Post Created Successfully",
+            postId: result.insertedId,
+          });
+        } catch (error) {
+          console.error("Error creating post:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
+    // get post data
+
+    app.get("/posts", async (req, res) => {
+      try {
+        // Fetch all posts from postCollection
+        const posts = await postCollection.find().toArray();
+
+        // Fetch user data for each post
+        const combinedData = await Promise.all(
+          posts.map(async (post) => {
+            const user = await userCollection.findOne({ email: post.email });
+
+            if (!user) {
+              throw new Error(`User not found for email: ${post.email}`);
+            }
+
+            return {
+              ...post,
+              user: {
+                name: user.name,
+                photo: user.photo,
+                user_type: user.userType,
+              },
+            };
+          })
+        );
+
+        res.status(200).json(combinedData);
+      } catch (error) {
+        console.error("Error fetching posts:", error.message);
+        res.status(500).json({ message: "Server error", error: error.message });
+      }
+    });
 
     //
     //
