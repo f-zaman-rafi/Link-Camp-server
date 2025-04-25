@@ -66,10 +66,13 @@ async function run() {
     // collection to store posts
     const postCollection = client.db("linkcamp").collection("posts");
 
-    // collection to store posts
+    // collection to store announcements
     const announcementCollection = client
       .db("linkcamp")
       .collection("announcements");
+
+    // collection to store official-notice
+    const noticetCollection = client.db("linkcamp").collection("notices");
 
     // collection to store votes
     const voteCollection = client.db("linkcamp").collection("votes");
@@ -93,6 +96,8 @@ async function run() {
       res.cookie("token", token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
+        sameSite: "Strict",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
       res.send({
@@ -120,7 +125,10 @@ async function run() {
         res.cookie("token", token, {
           httpOnly: true,
           secure: process.env.NODE_ENV === "production",
+          sameSite: "Strict",
+          maxAge: 7 * 24 * 60 * 60 * 1000,
         });
+
         res.status(200).json({ message: "Login successful", token });
       } catch (error) {
         res.status(500).json({ message: "Server error" });
@@ -332,6 +340,45 @@ async function run() {
       }
     );
 
+    // official notice post functionality
+
+    app.post(
+      "/admin/notice",
+      verifyAdminJWT(userCollection, ["admin"]),
+      upload.single("photo"),
+      async (req, res) => {
+        const { email } = req.user;
+        const { content } = req.body;
+        const photoURL = req.file ? req.file.path : null;
+
+        if (!content && !photoURL) {
+          return res
+            .status(400)
+            .json({ message: "Either content or photo is required" });
+        }
+
+        try {
+          const post = {
+            email,
+            content: content || null,
+            photo: photoURL || null,
+            createdAt: new Date(),
+          };
+          const result = await noticetCollection.insertOne(post);
+
+          res.status(201).json({
+            message: "notice Created Successfully",
+            postId: result.insertedId,
+          });
+        } catch (error) {
+          console.error("Error creating notice:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
     // get post data
 
     app.get("/posts", async (req, res) => {
@@ -368,12 +415,44 @@ async function run() {
 
     // get announcement data
 
-    app.get("/announcements", async (req, res) => {
+    app.get("/teacher/announcements", async (req, res) => {
       try {
-        // Fetch all posts from postCollection
+        // Fetch all announces from announceCollection
         const posts = await announcementCollection.find().toArray();
 
-        // Fetch user data for each post
+        const combinedData = await Promise.all(
+          posts.map(async (post) => {
+            const user = await userCollection.findOne({ email: post.email });
+
+            if (!user) {
+              throw new Error(`User not found for email: ${post.email}`);
+            }
+
+            return {
+              ...post,
+              user: {
+                name: user.name,
+                photo: user.photo,
+                user_type: user.userType,
+              },
+            };
+          })
+        );
+
+        res.status(200).json(combinedData);
+      } catch (error) {
+        console.error("Error fetching posts:", error.message);
+        res.status(500).json({ message: "Server error", error: error.message });
+      }
+    });
+
+    // get notice data
+
+    app.get("/admin/notices", async (req, res) => {
+      try {
+        // Fetch all notice from noticeCollection
+        const posts = await noticetCollection.find().toArray();
+
         const combinedData = await Promise.all(
           posts.map(async (post) => {
             const user = await userCollection.findOne({ email: post.email });
@@ -495,6 +574,35 @@ async function run() {
         res.status(500).json({ message: "Server error", error: error.message });
       }
     });
+
+    // Get user activity from all collections
+    app.get(
+      "/user/profile/:email",
+      verifyJWT(userCollection),
+      async (req, res) => {
+        const { email } = req.params;
+
+        try {
+          // Fetch posts from all collections
+          const [posts, announcements, notices] = await Promise.all([
+            postCollection.find({ email }).toArray(),
+            announcementCollection.find({ email }).toArray(),
+            noticetCollection.find({ email }).toArray(),
+          ]);
+
+          // Combine all posts into one array
+          const allPosts = [...posts, ...announcements, ...notices];
+
+          // Just return the combined posts (without vote functionality)
+          res.status(200).json(allPosts);
+        } catch (error) {
+          console.error("Error fetching user profile data:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
 
     //
     //
