@@ -18,7 +18,7 @@ app.use(cookieParser());
 
 app.use(
   cors({
-    origin: "http://localhost:5173", // or your frontend URL
+    origin: "https://link-camp.netlify.app",
     credentials: true,
   })
 );
@@ -76,6 +76,12 @@ async function run() {
 
     // collection to store votes
     const voteCollection = client.db("linkcamp").collection("votes");
+
+    // collection to store comments
+    const commentCollection = client.db("linkcamp").collection("comments");
+
+    // collection to store reports
+    const reportCollection = client.db("linkcamp").collection("reports");
 
     // store users data to userCollection
     app.post("/users", async (req, res) => {
@@ -603,6 +609,166 @@ async function run() {
         }
       }
     );
+
+    // Delete a post and its related votes
+    app.delete(
+      "/posts/:postId",
+      verifyJWT(userCollection),
+      async (req, res) => {
+        const { postId } = req.params;
+
+        try {
+          // Delete related votes first
+          await voteCollection.deleteMany({ postId });
+
+          // Then delete the post from the respective collection (posts, announcements, or notices)
+          const deleteResult = await Promise.all([
+            postCollection.deleteOne({ _id: new ObjectId(postId) }),
+            announcementCollection.deleteOne({ _id: new ObjectId(postId) }),
+            noticetCollection.deleteOne({ _id: new ObjectId(postId) }),
+          ]);
+
+          // Check if a post was deleted
+          const deleted = deleteResult.some(
+            (result) => result.deletedCount > 0
+          );
+
+          if (deleted) {
+            res
+              .status(200)
+              .json({ message: "Post and related votes deleted successfully" });
+          } else {
+            res.status(404).json({ message: "Post not found" });
+          }
+        } catch (error) {
+          console.error("Error deleting post and votes:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
+    // Add a comment to any post (post/announcement/notice)
+    app.post("/comments", verifyJWT(userCollection), async (req, res) => {
+      const { email } = req.user;
+      const { postId, content } = req.body;
+
+      if (!content || !postId) {
+        return res.status(400).json({ message: "Missing required fields" });
+      }
+
+      try {
+        const comment = {
+          postId,
+          email,
+          content,
+          createdAt: new Date(),
+        };
+
+        const result = await commentCollection.insertOne(comment);
+
+        res.status(201).json({
+          message: "Comment added successfully",
+          commentId: result.insertedId,
+        });
+      } catch (error) {
+        console.error("Error adding comment:", error.message);
+        res.status(500).json({ message: "Server error", error: error.message });
+      }
+    });
+
+    // Get comments for a specific post
+    app.get("/comments/:postId", async (req, res) => {
+      const { postId } = req.params;
+
+      try {
+        const comments = await commentCollection
+          .find({ postId })
+          .sort({ createdAt: 1 })
+          .toArray();
+
+        // Fetch user details for each comment
+        const commentsWithUserData = await Promise.all(
+          comments.map(async (comment) => {
+            const user = await userCollection.findOne({ email: comment.email });
+            return {
+              ...comment,
+              user: {
+                name: user?.name,
+                photo: user?.photo,
+                user_type: user?.userType,
+              },
+            };
+          })
+        );
+
+        res.status(200).json(commentsWithUserData);
+      } catch (error) {
+        console.error("Error fetching comments:", error.message);
+        res.status(500).json({ message: "Server error", error: error.message });
+      }
+    });
+
+    // Report a post
+    app.post("/reports", verifyJWT(userCollection), async (req, res) => {
+      const { email } = req.user;
+      const { postId, reason } = req.body;
+
+      if (!postId) {
+        return res.status(400).json({ message: "Missing required fields" });
+      }
+
+      try {
+        // Check if user already reported this post
+        const existingReport = await reportCollection.findOne({
+          postId,
+          reportedBy: email,
+        });
+
+        if (existingReport) {
+          return res
+            .status(400)
+            .json({ message: "You have already reported this post" });
+        }
+
+        const report = {
+          postId,
+          reportedBy: email,
+          reason: reason || "No reason provided",
+          reportedAt: new Date(),
+        };
+
+        await reportCollection.insertOne(report);
+
+        // Determine which collection contains this post
+        let collection;
+        if (await postCollection.findOne({ _id: new ObjectId(postId) })) {
+          collection = postCollection;
+        } else if (
+          await announcementCollection.findOne({ _id: new ObjectId(postId) })
+        ) {
+          collection = announcementCollection;
+        } else if (
+          await noticetCollection.findOne({ _id: new ObjectId(postId) })
+        ) {
+          collection = noticetCollection;
+        } else {
+          return res.status(404).json({ message: "Post not found" });
+        }
+
+        // Increment report count
+        await collection.updateOne(
+          { _id: new ObjectId(postId) },
+          { $inc: { reportCount: 1 } }
+        );
+
+        res.status(201).json({ message: "Post reported successfully" });
+      } catch (error) {
+        console.error("Error reporting post:", error.message);
+        res.status(500).json({ message: "Server error", error: error.message });
+      }
+    });
 
     //
     //
