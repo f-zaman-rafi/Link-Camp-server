@@ -18,10 +18,11 @@ app.use(cookieParser());
 
 app.use(
   cors({
-    origin: "https://link-camp.netlify.app",
+    origin: ["http://localhost:5173", "https://link-camp.netlify.app"],
     credentials: true,
   })
 );
+
 //
 //
 //
@@ -53,12 +54,19 @@ const storage = new CloudinaryStorage({
 
 const upload = multer({ storage });
 
+const cookieOption = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production" ? true : false,
+  sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+};
+
 module.exports = upload;
 
 async function run() {
   try {
     // Connect the client to the server
-    await client.connect();
+    // await client.connect();
 
     // collection to store users data
     const userCollection = client.db("linkcamp").collection("users");
@@ -99,12 +107,7 @@ async function run() {
         { expiresIn: "7d" }
       );
 
-      res.cookie("token", token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "Strict",
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
+      res.cookie("token", token, cookieOption);
 
       res.send({
         message: "User created successfully",
@@ -128,12 +131,7 @@ async function run() {
           { expiresIn: "7d" }
         );
 
-        res.cookie("token", token, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
-          sameSite: "Strict",
-          maxAge: 7 * 24 * 60 * 60 * 1000,
-        });
+        res.cookie("token", token, cookieOption);
 
         res.status(200).json({ message: "Login successful", token });
       } catch (error) {
@@ -145,8 +143,8 @@ async function run() {
     app.post("/logout", (req, res) => {
       res.clearCookie("token", {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "strict",
+        secure: process.env.NODE_ENV === "production" ? true : false,
+        sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
       });
       res.status(200).send({ message: "Logged out successfully" });
     });
@@ -610,7 +608,7 @@ async function run() {
       }
     );
 
-    // Delete a post and its related votes
+    // Delete a post and its related votes and comments
     app.delete(
       "/posts/:postId",
       verifyJWT(userCollection),
@@ -620,6 +618,12 @@ async function run() {
         try {
           // Delete related votes first
           await voteCollection.deleteMany({ postId });
+
+          // Delete related comments too
+          await commentCollection.deleteMany({ postId });
+
+          // Delete related comments too
+          await reportCollection.deleteMany({ postId });
 
           // Then delete the post from the respective collection (posts, announcements, or notices)
           const deleteResult = await Promise.all([
@@ -634,14 +638,17 @@ async function run() {
           );
 
           if (deleted) {
-            res
-              .status(200)
-              .json({ message: "Post and related votes deleted successfully" });
+            res.status(200).json({
+              message: "Post, votes, and comments deleted successfully",
+            });
           } else {
             res.status(404).json({ message: "Post not found" });
           }
         } catch (error) {
-          console.error("Error deleting post and votes:", error.message);
+          console.error(
+            "Error deleting post, votes, and comments:",
+            error.message
+          );
           res
             .status(500)
             .json({ message: "Server error", error: error.message });
@@ -770,15 +777,233 @@ async function run() {
       }
     });
 
+    // Get all reported posts for admin
+    app.get(
+      "/admin/reported-posts",
+      verifyAdminJWT(userCollection, ["admin"]),
+      async (req, res) => {
+        try {
+          // Get all reports
+          const reports = await reportCollection.find().toArray();
+
+          // Get unique post IDs from reports
+          const postIds = [...new Set(reports.map((report) => report.postId))];
+
+          // Fetch all posts (from all collections) that have been reported
+          const reportedPosts = await Promise.all(
+            postIds.map(async (postId) => {
+              // Check in each collection
+              let post = await postCollection.findOne({
+                _id: new ObjectId(postId),
+              });
+              let collectionType = "post";
+
+              if (!post) {
+                post = await announcementCollection.findOne({
+                  _id: new ObjectId(postId),
+                });
+                collectionType = "announcement";
+              }
+
+              if (!post) {
+                post = await noticetCollection.findOne({
+                  _id: new ObjectId(postId),
+                });
+                collectionType = "notice";
+              }
+
+              if (!post) return null;
+
+              // Get reporter details
+              const reportDetails = reports.filter((r) => r.postId === postId);
+              const reporters = await Promise.all(
+                reportDetails.map(async (report) => {
+                  const user = await userCollection.findOne({
+                    email: report.reportedBy,
+                  });
+                  return {
+                    email: report.reportedBy,
+                    name: user?.name,
+                    reason: report.reason,
+                    reportedAt: report.reportedAt,
+                  };
+                })
+              );
+
+              // Get post author details
+              const author = await userCollection.findOne({
+                email: post.email,
+              });
+
+              return {
+                ...post,
+                collectionType,
+                author: {
+                  name: author?.name,
+                  email: author?.email,
+                  userType: author?.userType,
+                },
+                reporters,
+                reportCount: reportDetails.length,
+              };
+            })
+          );
+
+          // Filter out null posts (if any)
+          const validPosts = reportedPosts.filter((post) => post !== null);
+
+          res.status(200).json(validPosts);
+        } catch (error) {
+          console.error("Error fetching reported posts:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
+    // Admin endpoint to delete a reported post
+    app.delete(
+      "/admin/reported-posts/:postId",
+      verifyAdminJWT(userCollection, ["admin"]),
+      async (req, res) => {
+        const { postId } = req.params;
+
+        try {
+          // First delete all reports for this post
+          await reportCollection.deleteMany({ postId });
+
+          // Then delete the post (your existing delete logic)
+          const deleteResult = await Promise.all([
+            postCollection.deleteOne({ _id: new ObjectId(postId) }),
+            announcementCollection.deleteOne({ _id: new ObjectId(postId) }),
+            noticetCollection.deleteOne({ _id: new ObjectId(postId) }),
+          ]);
+
+          // Also delete related votes and comments
+          await Promise.all([
+            voteCollection.deleteMany({ postId }),
+            commentCollection.deleteMany({ postId }),
+          ]);
+
+          const deleted = deleteResult.some(
+            (result) => result.deletedCount > 0
+          );
+
+          if (deleted) {
+            res.status(200).json({
+              message: "Post and all related data deleted successfully",
+            });
+          } else {
+            res.status(404).json({ message: "Post not found" });
+          }
+        } catch (error) {
+          console.error("Error deleting reported post:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
+    // Admin endpoint to dismiss reports for a post
+    app.delete(
+      "/admin/reported-posts/:postId/dismiss",
+      verifyAdminJWT(userCollection, ["admin"]),
+      async (req, res) => {
+        const { postId } = req.params;
+
+        try {
+          // Delete all reports for this post
+          const result = await reportCollection.deleteMany({ postId });
+
+          // Reset report count in the original post
+          await Promise.all([
+            postCollection.updateOne(
+              { _id: new ObjectId(postId) },
+              { $set: { reportCount: 0 } }
+            ),
+            announcementCollection.updateOne(
+              { _id: new ObjectId(postId) },
+              { $set: { reportCount: 0 } }
+            ),
+            noticetCollection.updateOne(
+              { _id: new ObjectId(postId) },
+              { $set: { reportCount: 0 } }
+            ),
+          ]);
+
+          res.status(200).json({
+            message: "Reports dismissed successfully",
+            deletedCount: result.deletedCount,
+          });
+        } catch (error) {
+          console.error("Error dismissing reports:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
+    // Route to delete a comment
+    app.delete(
+      "/comments/:commentId",
+      verifyJWT(userCollection),
+      async (req, res) => {
+        const { commentId } = req.params;
+        const { email } = req.user; // Get user email from JWT
+
+        try {
+          // Validate ObjectId
+          if (!ObjectId.isValid(commentId)) {
+            return res.status(400).json({ message: "Invalid comment ID" });
+          }
+
+          // Find the comment
+          const comment = await commentCollection.findOne({
+            _id: new ObjectId(commentId),
+          });
+
+          if (!comment) {
+            return res.status(404).json({ message: "Comment not found" });
+          }
+
+          // Check if the user deleting is the comment author or an admin
+          const user = await userCollection.findOne({ email });
+          if (comment.email !== email && user.userType !== "admin") {
+            return res.status(403).json({
+              message: "Unauthorized to delete this comment",
+            });
+          }
+
+          // Delete the comment
+          const result = await commentCollection.deleteOne({
+            _id: new ObjectId(commentId),
+          });
+
+          if (result.deletedCount === 0) {
+            return res.status(404).json({ message: "Comment not found" });
+          }
+
+          res.json({ message: "Comment deleted successfully" });
+        } catch (error) {
+          console.error("Error deleting comment:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
     //
     //
     //
     //
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
-    // console.log(
-    //   "Pinged your deployment. You successfully connected to MongoDB!"
-    // );
+    console.log(
+      "Pinged your deployment. You successfully connected to MongoDB!"
+    );
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
