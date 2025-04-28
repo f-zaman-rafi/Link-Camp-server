@@ -61,9 +61,9 @@ const cookieOption = {
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
-module.exports = upload;
+// module.exports = upload;
 
-async function run() {
+async function connectToDatabase() {
   try {
     // Connect the client to the server
     // await client.connect();
@@ -1009,7 +1009,10 @@ async function run() {
     // await client.close();
   }
 }
-run().catch(console.dir);
+// run().catch(console.dir);
+
+// Initiate the connection to MongoDB
+connectToDatabase();
 
 app.get("/", (req, res) => {
   res.send("Simple crud is running");
@@ -1018,3 +1021,4 @@ app.get("/", (req, res) => {
 app.listen(port, () => {
   console.log(`simple crud is running on port; ${port}`);
 });
+// module.exports = app;
