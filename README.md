@@ -50,7 +50,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/linkcamp-server.git
+git clone https://github.com/f-zaman-rafi/linkcamp-server.git
 
 # Navigate to project folder
 cd linkcamp-server
