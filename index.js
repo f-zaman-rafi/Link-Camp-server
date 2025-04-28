@@ -385,7 +385,7 @@ async function connectToDatabase() {
 
     // get post data
 
-    app.get("/posts", async (req, res) => {
+    app.get("/posts", verifyJWT(userCollection), async (req, res) => {
       try {
         // Fetch all posts from postCollection
         const posts = await postCollection.find().toArray();
@@ -419,40 +419,46 @@ async function connectToDatabase() {
 
     // get announcement data
 
-    app.get("/teacher/announcements", async (req, res) => {
-      try {
-        // Fetch all announces from announceCollection
-        const posts = await announcementCollection.find().toArray();
+    app.get(
+      "/teacher/announcements",
+      verifyJWT(userCollection),
+      async (req, res) => {
+        try {
+          // Fetch all announces from announceCollection
+          const posts = await announcementCollection.find().toArray();
 
-        const combinedData = await Promise.all(
-          posts.map(async (post) => {
-            const user = await userCollection.findOne({ email: post.email });
+          const combinedData = await Promise.all(
+            posts.map(async (post) => {
+              const user = await userCollection.findOne({ email: post.email });
 
-            if (!user) {
-              throw new Error(`User not found for email: ${post.email}`);
-            }
+              if (!user) {
+                throw new Error(`User not found for email: ${post.email}`);
+              }
 
-            return {
-              ...post,
-              user: {
-                name: user.name,
-                photo: user.photo,
-                user_type: user.userType,
-              },
-            };
-          })
-        );
+              return {
+                ...post,
+                user: {
+                  name: user.name,
+                  photo: user.photo,
+                  user_type: user.userType,
+                },
+              };
+            })
+          );
 
-        res.status(200).json(combinedData);
-      } catch (error) {
-        console.error("Error fetching posts:", error.message);
-        res.status(500).json({ message: "Server error", error: error.message });
+          res.status(200).json(combinedData);
+        } catch (error) {
+          console.error("Error fetching posts:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
       }
-    });
+    );
 
     // get notice data
 
-    app.get("/admin/notices", async (req, res) => {
+    app.get("/admin/notices", verifyJWT(userCollection), async (req, res) => {
       try {
         // Fetch all notice from noticeCollection
         const posts = await noticetCollection.find().toArray();
@@ -533,7 +539,7 @@ async function connectToDatabase() {
     });
 
     // Get total upvotes and downvotes for a post
-    app.get("/votes/:postId", async (req, res) => {
+    app.get("/votes/:postId", verifyJWT(userCollection), async (req, res) => {
       const { postId } = req.params;
 
       try {
@@ -554,7 +560,7 @@ async function connectToDatabase() {
     });
 
     // Get total upvotes and downvotes for all posts
-    app.get("/voteCounts", async (req, res) => {
+    app.get("/voteCounts", verifyJWT(userCollection), async (req, res) => {
       try {
         const voteCounts = await voteCollection
           .aggregate([
@@ -686,36 +692,44 @@ async function connectToDatabase() {
     });
 
     // Get comments for a specific post
-    app.get("/comments/:postId", async (req, res) => {
-      const { postId } = req.params;
+    app.get(
+      "/comments/:postId",
+      verifyJWT(userCollection),
+      async (req, res) => {
+        const { postId } = req.params;
 
-      try {
-        const comments = await commentCollection
-          .find({ postId })
-          .sort({ createdAt: 1 })
-          .toArray();
+        try {
+          const comments = await commentCollection
+            .find({ postId })
+            .sort({ createdAt: 1 })
+            .toArray();
 
-        // Fetch user details for each comment
-        const commentsWithUserData = await Promise.all(
-          comments.map(async (comment) => {
-            const user = await userCollection.findOne({ email: comment.email });
-            return {
-              ...comment,
-              user: {
-                name: user?.name,
-                photo: user?.photo,
-                user_type: user?.userType,
-              },
-            };
-          })
-        );
+          // Fetch user details for each comment
+          const commentsWithUserData = await Promise.all(
+            comments.map(async (comment) => {
+              const user = await userCollection.findOne({
+                email: comment.email,
+              });
+              return {
+                ...comment,
+                user: {
+                  name: user?.name,
+                  photo: user?.photo,
+                  user_type: user?.userType,
+                },
+              };
+            })
+          );
 
-        res.status(200).json(commentsWithUserData);
-      } catch (error) {
-        console.error("Error fetching comments:", error.message);
-        res.status(500).json({ message: "Server error", error: error.message });
+          res.status(200).json(commentsWithUserData);
+        } catch (error) {
+          console.error("Error fetching comments:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
       }
-    });
+    );
 
     // Report a post
     app.post("/reports", verifyJWT(userCollection), async (req, res) => {
