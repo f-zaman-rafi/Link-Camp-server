@@ -1029,7 +1029,9 @@ async function connectToDatabase() {
 connectToDatabase();
 
 app.get("/", (req, res) => {
-  res.send("Simple crud is running");
+  res.send(
+    "🚨 Whoa, looks like you accidentally stumbled into the server side! Don't worry, it's safe here... but head back to LinkCamp at [https://link-camp.netlify.app](https://link-camp.netlify.app) to catch up with the campus buzz! 😎📚"
+  );
 });
 
 app.listen(port, () => {
