@@ -1,9 +1,9 @@
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion } = require("mongodb");
 const cookieParser = require("cookie-parser");
-require("dotenv").config();
 const verifyJWT = require("./verifyJWT");
 const jsonwebtoken = require("jsonwebtoken");
 const verifyAdminJWT = require("./verifyAdminJWT");
@@ -56,8 +56,8 @@ const upload = multer({ storage });
 
 const cookieOption = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production" ? true : false,
-  sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+  secure: true,
+  sameSite: "strict",
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
@@ -141,11 +141,7 @@ async function connectToDatabase() {
 
     // clear cookies when logout
     app.post("/logout", (req, res) => {
-      res.clearCookie("token", {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production" ? true : false,
-        sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
-      });
+      res.clearCookie("token", cookieOption);
       res.status(200).send({ message: "Logged out successfully" });
     });
 
@@ -1029,9 +1025,54 @@ async function connectToDatabase() {
 connectToDatabase();
 
 app.get("/", (req, res) => {
-  res.send(
-    "🚨 Whoa, looks like you accidentally stumbled into the server side! Don't worry, it's safe here... but head back to LinkCamp at [https://link-camp.netlify.app](https://link-camp.netlify.app) to catch up with the campus buzz! 😎📚"
-  );
+  res.send(`
+    <html>
+      <head>
+        <style>
+          body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color:rgb(0, 0, 0);
+            font-family: Arial, sans-serif;
+          }
+          .container {
+            text-align: center;
+            background-color: #ffcc00;
+            padding: 40px;
+            border: 2px solid #000;
+            border-radius: 10px;
+            box-shadow: 0 0 25px rgb(255, 0, 0);
+          }
+          h1 {
+            font-size: 2em;
+            color: #333;
+          }
+          p {
+            font-size: 1.2em;
+            color: #333;
+          }
+          a {
+            color:rgb(255, 0, 0);
+            text-decoration: none;
+            font-weight: bold;
+          }
+          a:hover {
+            text-decoration: underline;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>🚨 Whoa, looks like you accidentally stumbled into the server side!</h1>
+          <p>Don't worry, it's safe here... but head back to the campus home at 
+          <a href="https://link-camp.netlify.app" target="_blank">LinkCamp</a> to catch up with the campus buzz! 😎📚</p>
+        </div>
+      </body>
+    </html>
+  `);
 });
 
 app.listen(port, () => {
