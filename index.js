@@ -1,35 +1,32 @@
-require("dotenv").config();
-const express = require("express");
-const cors = require("cors");
-const port = process.env.PORT || 5000;
-const { MongoClient, ServerApiVersion } = require("mongodb");
-const cookieParser = require("cookie-parser");
-const verifyJWT = require("./verifyJWT");
-const jsonwebtoken = require("jsonwebtoken");
-const verifyAdminJWT = require("./verifyAdminJWT");
-const { ObjectId } = require("mongodb");
-const multer = require("multer");
-const cloudinary = require("cloudinary").v2;
-const { CloudinaryStorage } = require("multer-storage-cloudinary");
+require("dotenv").config(); // Load environment variables from .env file
+const express = require("express"); // Import Express.js framework
+const cors = require("cors"); // Import CORS middleware for handling cross-origin requests
+const port = process.env.PORT || 5000; // Define server port, default to 5000
+const { MongoClient, ServerApiVersion } = require("mongodb"); // Import MongoDB client and API version
+const cookieParser = require("cookie-parser"); // Import middleware for parsing cookies
+const verifyJWT = require("./verifyJWT"); // Import custom middleware for JWT verification
+const jsonwebtoken = require("jsonwebtoken"); // Import JSON Web Token library
+const verifyAdminJWT = require("./verifyAdminJWT"); // Import custom middleware for admin JWT verification
+const { ObjectId } = require("mongodb"); // Import ObjectId for MongoDB object IDs
+const multer = require("multer"); // Import middleware for handling file uploads
+const cloudinary = require("cloudinary").v2; // Import Cloudinary SDK for cloud media management
+const { CloudinaryStorage } = require("multer-storage-cloudinary"); // Import Cloudinary storage engine for Multer
 
-const app = express();
-app.use(express.json());
-app.use(cookieParser());
+const app = express(); // Create Express application instance
+app.use(express.json()); // Middleware to parse JSON request bodies
+app.use(cookieParser()); // Middleware to parse cookies
 
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://link-camp.netlify.app"],
-    credentials: true,
+    origin: ["http://localhost:5173", "https://link-camp.netlify.app"], // Allowed origins for CORS
+    credentials: true, // Allow sending and receiving cookies
   })
 );
 
-//
-//
-//
+// MongoDB connection URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.okia5sv.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
-//
-//
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
+
+// Create a MongoClient with Stable API version settings
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -38,27 +35,31 @@ const client = new MongoClient(uri, {
   },
 });
 
+// Configure Cloudinary credentials
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
+// Configure Cloudinary storage for Multer
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
-    folder: "linkcamp_uploads",
-    allowed_formats: ["jpg", "png", "jpeg", "webp"],
+    folder: "linkcamp_uploads", // Cloudinary folder for uploads
+    allowed_formats: ["jpg", "png", "jpeg", "webp"], // Allowed image formats
   },
 });
 
+// Create Multer instance with Cloudinary storage
 const upload = multer({ storage });
 
+// Cookie options for HTTP-only, secure, same-site, and max age
 const cookieOption = {
   httpOnly: true,
   secure: true,
   sameSite: "none",
-  maxAge: 7 * 24 * 60 * 60 * 1000,
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
 };
 
 // module.exports = upload;
