@@ -1,3 +1,13 @@
+# Local test files
+apiTest.http
+generateToken.js
+
+# Environment variables
 .env
-node_modules
+
+# Dependencies
+node_modules/
+
+
+# Vercel deployment files
 .vercel
