@@ -4,6 +4,7 @@ generateToken.js
 
 # Environment variables
 .env
+.env.example
 
 # Dependencies
 node_modules/
@@ -11,3 +12,4 @@ node_modules/
 
 # Vercel deployment files
 .vercel
+
