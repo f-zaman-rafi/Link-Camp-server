@@ -4,7 +4,7 @@ const express = require("express"); // Import Express.js framework
 const cors = require("cors"); // Import CORS middleware for handling cross-origin requests
 const port = process.env.PORT || 5000; // Define server port, default to 5000
 const { MongoClient, ServerApiVersion } = require("mongodb"); // Import MongoDB client and API version
-const cookieParser = require("cookie-parser"); // Import middleware for parsing cookies
+// const cookieParser = require("cookie-parser"); // Import middleware for parsing cookies
 const { ObjectId } = require("mongodb"); // Import ObjectId for MongoDB object IDs
 const multer = require("multer"); // Import middleware for handling file uploads
 const cloudinary = require("cloudinary").v2; // Import Cloudinary SDK for cloud media management
@@ -19,14 +19,18 @@ admin.initializeApp({
   }),
 });
 
-const app = express(); // Create Express application instance
-app.use(express.json()); // Middleware to parse JSON request bodies
-app.use(cookieParser()); // Middleware to parse cookies
+const app = express();
+app.use(express.json());
+// app.use(cookieParser());
 
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://link-camp.netlify.app"], // Allowed origins for CORS
-    credentials: true, // Allow sending and receiving cookies
+    origin: [
+      "http://localhost:5173",
+      "https://link-camp.netlify.app",
+      "http://localhost:8081",
+    ],
+    credentials: true,
   })
 );
 
@@ -61,13 +65,13 @@ const storage = new CloudinaryStorage({
 // Create Multer instance with Cloudinary storage
 const upload = multer({ storage });
 
-// Cookie options for HTTP-only, secure, same-site, and max age
-const cookieOption = {
-  httpOnly: true,
-  secure: false,
-  sameSite: "lax",
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-};
+// // Cookie options for HTTP-only, secure, same-site, and max age
+// const cookieOption = {
+//   httpOnly: true,
+//   secure: false,
+//   sameSite: "lax",
+//   maxAge: 7 * 24 * 60 * 60 * 1000,
+// };
 
 // module.exports = upload;
 
@@ -98,6 +102,28 @@ async function connectToDatabase() {
 
     // collection to store reports
     const reportCollection = client.db("linkcamp").collection("reports");
+
+    // Add  backend routes here
+    const router = express.Router();
+
+    // Apply the middleware to your route
+    // Correct the route to match the frontend request
+    router.get(
+      "/user/:email",
+      verifyFirebaseAuth(userCollection),
+      async (req, res) => {
+        const email = req.params.email;
+        const user = await userCollection.findOne({ email });
+
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        res.status(200).json(user);
+      }
+    );
+
+    app.use("/api", router);
 
     // store users data to userCollection
     app.post("/users", async (req, res) => {
@@ -1103,7 +1129,7 @@ app.get("/", (req, res) => {
   `);
 });
 
-app.listen(port, () => {
-  console.log(`simple crud is running on port; ${port}`);
+app.listen(port, "0.0.0.0", () => {
+  console.log(`simple crud is running on port ${port}`);
 });
 // module.exports = app;
