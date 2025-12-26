@@ -35,7 +35,7 @@ app.use(
 );
 
 // MongoDB connection URI
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.okia5sv.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.sgxrfxf.mongodb.net/?appName=Cluster0`;
 
 // Create a MongoClient with Stable API version settings
 const client = new MongoClient(uri, {
@@ -103,26 +103,30 @@ async function connectToDatabase() {
     // collection to store reports
     const reportCollection = client.db("linkcamp").collection("reports");
 
-    // Add  backend routes here
+    // Initialize router
     const router = express.Router();
 
-    // Apply the middleware to your route
-    // Correct the route to match the frontend request
+    // Route to fetch user details by email
     router.get(
       "/user/:email",
       verifyFirebaseAuth(userCollection),
       async (req, res) => {
         const email = req.params.email;
+
+        // Fetch user from the database
         const user = await userCollection.findOne({ email });
 
+        // Return 404 if user not found
         if (!user) {
           return res.status(404).json({ message: "User not found" });
         }
 
+        // Respond with the user data
         res.status(200).json(user);
       }
     );
 
+    // Mount router to API path
     app.use("/api", router);
 
     // store users data to userCollection
