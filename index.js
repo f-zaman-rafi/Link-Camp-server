@@ -130,17 +130,25 @@ async function connectToDatabase() {
     app.use("/api", router);
 
     // store users data to userCollection
-    app.post("/users", async (req, res) => {
+    app.post("/users", upload.single("photo"), async (req, res) => {
       const user = req.body;
       const existingUser = await userCollection.findOne({ email: user.email });
       if (existingUser) {
         return res.status(400).json({ message: "User already exists" });
       }
-      await userCollection.insertOne(user);
+
+      const photoUrl = req.file?.path || "";
+
+      const userDoc = {
+        ...user,
+        photo: photoUrl,
+      };
+
+      await userCollection.insertOne(userDoc);
 
       res.send({
         message: "User created successfully",
-        user: { email: user.email },
+        user: { email: user.email, photo: photoUrl },
       });
     });
 
@@ -298,7 +306,7 @@ async function connectToDatabase() {
       upload.single("photo"),
       async (req, res) => {
         const { email } = req.user;
-        const { content } = req.body;
+        const { content, postType } = req.body;
         const photoURL = req.file ? req.file.path : null;
 
         if (!content && !photoURL) {
@@ -312,6 +320,7 @@ async function connectToDatabase() {
             email,
             content: content || null,
             photo: photoURL || null,
+            postType: postType || "general",
             createdAt: new Date(),
           };
           const result = await postCollection.insertOne(post);
