@@ -103,6 +103,11 @@ async function connectToDatabase() {
     // collection to store reports
     const reportCollection = client.db("linkcamp").collection("reports");
 
+    // collection to store comment reports
+    const commentReportCollection = client
+      .db("linkcamp")
+      .collection("commentReports");
+
     // Initialize router
     const router = express.Router();
 
@@ -307,12 +312,27 @@ async function connectToDatabase() {
       async (req, res) => {
         const { email } = req.user;
         const { content, postType } = req.body;
+        let { repostOf } = req.body;
         const photoURL = req.file ? req.file.path : null;
 
-        if (!content && !photoURL) {
+        if (!content && !photoURL && !repostOf) {
           return res
             .status(400)
             .json({ message: "Either content or photo is required" });
+        }
+
+        if (repostOf) {
+          try {
+            const target = await postCollection.findOne({
+              _id: new ObjectId(repostOf),
+            });
+            if (target) {
+              const rootId = target.repostOf ? target.repostOf : target._id;
+              repostOf = rootId.toString();
+            }
+          } catch (err) {
+            console.error("Error processing repost:", err.message);
+          }
         }
 
         try {
@@ -321,8 +341,10 @@ async function connectToDatabase() {
             content: content || null,
             photo: photoURL || null,
             postType: postType || "general",
+            repostOf: repostOf || null,
             createdAt: new Date(),
           };
+
           const result = await postCollection.insertOne(post);
 
           res.status(201).json({
@@ -449,6 +471,173 @@ async function connectToDatabase() {
         res.status(500).json({ message: "Server error", error: error.message });
       }
     });
+
+    // get single post data
+    app.get(
+      "/posts/:postId",
+      verifyFirebaseAuth(userCollection),
+      async (req, res) => {
+        const { postId } = req.params;
+
+        if (!ObjectId.isValid(postId)) {
+          return res.status(400).json({ message: "Invalid post ID" });
+        }
+
+        try {
+          const collections = [
+            postCollection,
+            announcementCollection,
+            noticetCollection,
+          ];
+          let found = null;
+
+          for (const col of collections) {
+            const post = await col.findOne({ _id: new ObjectId(postId) });
+            if (post) {
+              found = post;
+              break;
+            }
+          }
+
+          if (!found)
+            return res.status(404).json({ message: "Post not found" });
+
+          res.status(200).json(found);
+        } catch (error) {
+          console.error("Error fetching post:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
+    // update post data
+    app.patch(
+      "/posts/:postId",
+      verifyFirebaseAuth(userCollection),
+      upload.single("photo"),
+      async (req, res) => {
+        const { postId } = req.params;
+        const { email } = req.user;
+        const { content } = req.body;
+        const removePhoto = req.body.removePhoto === "true";
+        const photoURL = req.file ? req.file.path : null;
+
+        if (!ObjectId.isValid(postId)) {
+          return res.status(400).json({ message: "Invalid post ID" });
+        }
+
+        try {
+          const collections = [
+            postCollection,
+            announcementCollection,
+            noticetCollection,
+          ];
+          let targetCol = null;
+          let post = null;
+
+          for (const col of collections) {
+            const found = await col.findOne({ _id: new ObjectId(postId) });
+            if (found) {
+              post = found;
+              targetCol = col;
+              break;
+            }
+          }
+
+          if (!post || !targetCol) {
+            return res.status(404).json({ message: "Post not found" });
+          }
+
+          const userDoc = await userCollection.findOne({ email });
+          if (post.email !== email && userDoc?.userType !== "admin") {
+            return res
+              .status(403)
+              .json({ message: "Unauthorized to edit this post" });
+          }
+
+          const update = {
+            content: content?.trim() || null,
+            updatedAt: new Date(),
+          };
+
+          if (removePhoto) update.photo = null;
+          if (photoURL) update.photo = photoURL;
+
+          await targetCol.updateOne(
+            { _id: new ObjectId(postId) },
+            { $set: update }
+          );
+
+          res.status(200).json({ message: "Post updated successfully" });
+        } catch (error) {
+          console.error("Error updating post:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
+    // delete post data
+    app.delete(
+      "/posts/:postId",
+      verifyFirebaseAuth(userCollection),
+      async (req, res) => {
+        const { postId } = req.params;
+        const { email } = req.user;
+
+        try {
+          if (!ObjectId.isValid(postId)) {
+            return res.status(400).json({ message: "Invalid post ID" });
+          }
+
+          const collections = [
+            postCollection,
+            announcementCollection,
+            noticetCollection,
+          ];
+          let targetCol = null;
+          let post = null;
+
+          for (const col of collections) {
+            const found = await col.findOne({ _id: new ObjectId(postId) });
+            if (found) {
+              post = found;
+              targetCol = col;
+              break;
+            }
+          }
+
+          if (!post || !targetCol) {
+            return res.status(404).json({ message: "Post not found" });
+          }
+
+          const userDoc = await userCollection.findOne({ email });
+          if (post.email !== email && userDoc?.userType !== "admin") {
+            return res
+              .status(403)
+              .json({ message: "Unauthorized to delete this post" });
+          }
+
+          await voteCollection.deleteMany({ postId });
+          await commentCollection.deleteMany({ postId });
+          await reportCollection.deleteMany({ postId });
+
+          await targetCol.deleteOne({ _id: new ObjectId(postId) });
+
+          res.status(200).json({
+            message: "Post, votes, and comments deleted successfully",
+          });
+        } catch (error) {
+          console.error("Error deleting post:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
 
     // get announcement data
 
@@ -636,6 +825,49 @@ async function connectToDatabase() {
       }
     );
 
+    // Get total comments count for all posts
+    app.get(
+      "/commentCounts",
+      verifyFirebaseAuth(userCollection),
+      async (req, res) => {
+        try {
+          const counts = await commentCollection
+            .aggregate([{ $group: { _id: "$postId", count: { $sum: 1 } } }])
+            .toArray();
+
+          res.status(200).json(counts);
+        } catch (error) {
+          console.error("Error fetching comment counts:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
+    // Get total repost count for all posts
+    app.get(
+      "/repostCounts",
+      verifyFirebaseAuth(userCollection),
+      async (req, res) => {
+        try {
+          const counts = await postCollection
+            .aggregate([
+              { $match: { repostOf: { $exists: true, $ne: null } } },
+              { $group: { _id: "$repostOf", count: { $sum: 1 } } },
+            ])
+            .toArray();
+
+          res.status(200).json(counts);
+        } catch (error) {
+          console.error("Error fetching repost counts:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
     // Get user activity from all collections
     app.get(
       "/user/profile/:email",
@@ -788,6 +1020,54 @@ async function connectToDatabase() {
       }
     );
 
+    // Update a comment
+    app.patch(
+      "/comments/:commentId",
+      verifyFirebaseAuth(userCollection),
+      async (req, res) => {
+        const { commentId } = req.params;
+        const { email } = req.user;
+        const { content } = req.body;
+
+        if (!content || !content.trim()) {
+          return res.status(400).json({ message: "Content is required" });
+        }
+
+        if (!ObjectId.isValid(commentId)) {
+          return res.status(400).json({ message: "Invalid comment ID" });
+        }
+
+        try {
+          const comment = await commentCollection.findOne({
+            _id: new ObjectId(commentId),
+          });
+
+          if (!comment) {
+            return res.status(404).json({ message: "Comment not found" });
+          }
+
+          const user = await userCollection.findOne({ email });
+          if (comment.email !== email && user?.userType !== "admin") {
+            return res
+              .status(403)
+              .json({ message: "Unauthorized to edit this comment" });
+          }
+
+          await commentCollection.updateOne(
+            { _id: new ObjectId(commentId) },
+            { $set: { content: content.trim(), editedAt: new Date() } }
+          );
+
+          res.json({ message: "Comment updated successfully" });
+        } catch (error) {
+          console.error("Error updating comment:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
     // Report a post
     app.post(
       "/reports",
@@ -847,6 +1127,60 @@ async function connectToDatabase() {
           res.status(201).json({ message: "Post reported successfully" });
         } catch (error) {
           console.error("Error reporting post:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
+    // Report a comment
+    app.post(
+      "/comment-reports",
+      verifyFirebaseAuth(userCollection),
+      async (req, res) => {
+        const { email } = req.user;
+        const { commentId, reason } = req.body;
+
+        if (!commentId) {
+          return res.status(400).json({ message: "Missing required fields" });
+        }
+
+        if (!ObjectId.isValid(commentId)) {
+          return res.status(400).json({ message: "Invalid comment ID" });
+        }
+
+        try {
+          const comment = await commentCollection.findOne({
+            _id: new ObjectId(commentId),
+          });
+
+          if (!comment) {
+            return res.status(404).json({ message: "Comment not found" });
+          }
+
+          const existingReport = await commentReportCollection.findOne({
+            commentId,
+            reportedBy: email,
+          });
+
+          if (existingReport) {
+            return res
+              .status(400)
+              .json({ message: "You already reported this comment" });
+          }
+
+          await commentReportCollection.insertOne({
+            commentId,
+            postId: comment.postId || null,
+            reportedBy: email,
+            reason: reason || "No reason provided",
+            reportedAt: new Date(),
+          });
+
+          res.status(201).json({ message: "Comment reported successfully" });
+        } catch (error) {
+          console.error("Error reporting comment:", error.message);
           res
             .status(500)
             .json({ message: "Server error", error: error.message });
