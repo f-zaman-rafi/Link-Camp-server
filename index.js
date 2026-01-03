@@ -176,20 +176,6 @@ async function connectToDatabase() {
       res.status(200).send({ message: "Logged out successfully" });
     });
 
-    // get user data
-    app.get(
-      "/user/:email",
-      verifyFirebaseAuth(userCollection),
-      async (req, res) => {
-        const email = req.params.email;
-        const user = await userCollection.findOne({ email });
-        if (!user) {
-          return res.status(404).json({ message: "User not found" });
-        }
-        res.status(200).json(user);
-      }
-    );
-
     // get all user data for admin
     app.get(
       "/admin/users",
