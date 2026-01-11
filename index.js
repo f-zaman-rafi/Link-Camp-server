@@ -2,7 +2,7 @@ const admin = require("firebase-admin");
 require("dotenv").config(); // Load environment variables from .env file
 const express = require("express"); // Import Express.js framework
 const cors = require("cors"); // Import CORS middleware for handling cross-origin requests
-const port = process.env.PORT || 5000; // Define server port, default to 5000
+const port = process.env.PORT || 5001; // Define server port, default to 5000
 const { MongoClient, ServerApiVersion } = require("mongodb"); // Import MongoDB client and API version
 // const cookieParser = require("cookie-parser"); // Import middleware for parsing cookies
 const { ObjectId } = require("mongodb"); // Import ObjectId for MongoDB object IDs
@@ -112,24 +112,24 @@ async function connectToDatabase() {
     const router = express.Router();
 
     // Route to fetch user details by email
-    router.get(
-      "/user/:email",
-      verifyFirebaseAuth(userCollection),
-      async (req, res) => {
-        const email = req.params.email;
+    // router.get(
+    //   "/user/:email",
+    //   verifyFirebaseAuth(userCollection),
+    //   async (req, res) => {
+    //     const email = req.params.email;
 
-        // Fetch user from the database
-        const user = await userCollection.findOne({ email });
+    //     // Fetch user from the database
+    //     const user = await userCollection.findOne({ email });
 
-        // Return 404 if user not found
-        if (!user) {
-          return res.status(404).json({ message: "User not found" });
-        }
+    //     // Return 404 if user not found
+    //     if (!user) {
+    //       return res.status(404).json({ message: "User not found" });
+    //     }
 
-        // Respond with the user data
-        res.status(200).json(user);
-      }
-    );
+    //     // Respond with the user data
+    //     res.status(200).json(user);
+    //   }
+    // );
 
     // Mount router to API path
     app.use("/api", router);
@@ -175,6 +175,20 @@ async function connectToDatabase() {
     app.post("/logout", (req, res) => {
       res.status(200).send({ message: "Logged out successfully" });
     });
+
+    // get user data
+    app.get(
+      "/user/:email",
+      verifyFirebaseAuth(userCollection),
+      async (req, res) => {
+        const email = req.params.email;
+        const user = await userCollection.findOne({ email });
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+        res.status(200).json(user);
+      }
+    );
 
     // get all user data for admin
     app.get(
@@ -282,6 +296,56 @@ async function connectToDatabase() {
             .json({ message: "Photo uploaded successfully", photoUrl });
         } catch (error) {
           console.error("Error uploading photo:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
+    // Update full user profile (name, gender, userType, etc.)
+    app.patch(
+      "/user/profile",
+      verifyFirebaseAuth(userCollection),
+      upload.single("photo"),
+      async (req, res) => {
+        const { email } = req.user;
+
+        const { name, gender, userType, user_id, department, session, verify } =
+          req.body;
+
+        const photoUrl = req.file?.path || null;
+
+        const update = {};
+        if (name) update.name = name;
+        if (gender) update.gender = gender;
+        if (userType) update.userType = userType;
+        if (user_id !== undefined) update.user_id = user_id;
+        if (department !== undefined) update.department = department;
+        if (session !== undefined) update.session = session;
+        if (verify !== undefined) update.verify = verify;
+        if (photoUrl) update.photo = photoUrl;
+
+        if (Object.keys(update).length === 0) {
+          return res.status(400).json({ message: "No fields to update" });
+        }
+
+        try {
+          const result = await userCollection.updateOne(
+            { email },
+            { $set: update }
+          );
+
+          if (result.matchedCount === 0) {
+            return res.status(404).json({ message: "User not found" });
+          }
+
+          const updatedUser = await userCollection.findOne({ email });
+          res
+            .status(200)
+            .json({ message: "Profile updated", user: updatedUser });
+        } catch (error) {
+          console.error("Error updating profile:", error.message);
           res
             .status(500)
             .json({ message: "Server error", error: error.message });
@@ -854,7 +918,7 @@ async function connectToDatabase() {
       }
     );
 
-    // Get user activity from all collections
+    // Get user activity from all collections (with original repost data)
     app.get(
       "/user/profile/:email",
       verifyFirebaseAuth(userCollection),
@@ -862,18 +926,73 @@ async function connectToDatabase() {
         const { email } = req.params;
 
         try {
-          // Fetch posts from all collections
           const [posts, announcements, notices] = await Promise.all([
             postCollection.find({ email }).toArray(),
             announcementCollection.find({ email }).toArray(),
             noticetCollection.find({ email }).toArray(),
           ]);
 
-          // Combine all posts into one array
           const allPosts = [...posts, ...announcements, ...notices];
 
-          // Just return the combined posts (without vote functionality)
-          res.status(200).json(allPosts);
+          const repostIds = [
+            ...new Set(allPosts.map((p) => p.repostOf).filter(Boolean)),
+          ];
+          const repostObjectIds = repostIds
+            .filter(ObjectId.isValid)
+            .map((id) => new ObjectId(id));
+
+          const [postRoots, annRoots, noticeRoots] = repostObjectIds.length
+            ? await Promise.all([
+                postCollection
+                  .find({ _id: { $in: repostObjectIds } })
+                  .toArray(),
+                announcementCollection
+                  .find({ _id: { $in: repostObjectIds } })
+                  .toArray(),
+                noticetCollection
+                  .find({ _id: { $in: repostObjectIds } })
+                  .toArray(),
+              ])
+            : [[], [], []];
+
+          const originals = [...postRoots, ...annRoots, ...noticeRoots];
+          const originalMap = {};
+          originals.forEach((p) => {
+            originalMap[p._id.toString()] = p;
+          });
+
+          const emails = new Set(allPosts.map((p) => p.email));
+          originals.forEach((p) => p.email && emails.add(p.email));
+          const users = await userCollection
+            .find({ email: { $in: [...emails] } })
+            .toArray();
+          const userMap = {};
+          users.forEach((u) => {
+            userMap[u.email] = u;
+          });
+
+          const withUser = (post) => {
+            const u = userMap[post.email];
+            return {
+              ...post,
+              user: u
+                ? { name: u.name, photo: u.photo, user_type: u.userType }
+                : undefined,
+            };
+          };
+
+          const combined = allPosts.map((p) => {
+            const base = withUser(p);
+            if (p.repostOf && originalMap[p.repostOf]) {
+              return {
+                ...base,
+                originalPost: withUser(originalMap[p.repostOf]),
+              };
+            }
+            return base;
+          });
+
+          res.status(200).json(combined);
         } catch (error) {
           console.error("Error fetching user profile data:", error.message);
           res

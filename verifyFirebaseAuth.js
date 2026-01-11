@@ -43,6 +43,7 @@ module.exports = (userCollection, requireRole) => async (req, res, next) => {
         .status(403)
         .json({ message: "User does not have required role" });
     }
+    // console.log("[AUTH]", req.originalUrl);
 
     // If no specific role check, proceed to the next middleware
     next();
