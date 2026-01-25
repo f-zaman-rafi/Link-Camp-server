@@ -31,7 +31,7 @@ app.use(
       "http://localhost:8081",
     ],
     credentials: true,
-  })
+  }),
 );
 
 // MongoDB connection URI
@@ -187,7 +187,7 @@ async function connectToDatabase() {
           return res.status(404).json({ message: "User not found" });
         }
         res.status(200).json(user);
-      }
+      },
     );
 
     // get all user data for admin
@@ -197,7 +197,7 @@ async function connectToDatabase() {
       async (req, res) => {
         const users = await userCollection.find().toArray();
         res.json(users);
-      }
+      },
     );
 
     // Update user verification status
@@ -217,7 +217,7 @@ async function connectToDatabase() {
           // Update user status
           const result = await userCollection.updateOne(
             { _id: new ObjectId(id) },
-            { $set: { verify } }
+            { $set: { verify } },
           );
 
           if (result.matchedCount === 0) {
@@ -231,7 +231,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     //  update user name
@@ -250,7 +250,7 @@ async function connectToDatabase() {
         try {
           const result = await userCollection.updateOne(
             { email },
-            { $set: { name } }
+            { $set: { name } },
           );
 
           if (result.matchedCount === 0) {
@@ -264,7 +264,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // update user photo
@@ -284,7 +284,7 @@ async function connectToDatabase() {
         try {
           const result = await userCollection.updateOne(
             { email },
-            { $set: { photo: photoUrl } }
+            { $set: { photo: photoUrl } },
           );
 
           if (result.matchedCount === 0) {
@@ -300,7 +300,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Update full user profile (name, gender, userType, etc.)
@@ -333,7 +333,7 @@ async function connectToDatabase() {
         try {
           const result = await userCollection.updateOne(
             { email },
-            { $set: update }
+            { $set: update },
           );
 
           if (result.matchedCount === 0) {
@@ -350,14 +350,14 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // user post functionality
 
     app.post(
       "/user/post",
-      verifyFirebaseAuth(userCollection),
+      verifyFirebaseAuth(userCollection, null, { requireApproved: true }),
       upload.single("photo"),
       async (req, res) => {
         const { email } = req.user;
@@ -407,14 +407,16 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // announcement post functionality
 
     app.post(
       "/teacher/announcement",
-      verifyFirebaseAuth(userCollection),
+      verifyFirebaseAuth(userCollection, ["teacher"], {
+        requireApproved: true,
+      }),
       upload.single("photo"),
       async (req, res) => {
         const { email } = req.user;
@@ -446,14 +448,14 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // official notice post functionality
 
     app.post(
       "/admin/notice",
-      verifyFirebaseAuth(userCollection, ["admin"]),
+      verifyFirebaseAuth(userCollection, ["admin"], { requireApproved: true }),
       upload.single("photo"),
       async (req, res) => {
         const { email } = req.user;
@@ -485,7 +487,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // get post data
@@ -512,7 +514,7 @@ async function connectToDatabase() {
                 user_type: user.userType,
               },
             };
-          })
+          }),
         );
 
         res.status(200).json(combinedData);
@@ -559,13 +561,13 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // update post data
     app.patch(
       "/posts/:postId",
-      verifyFirebaseAuth(userCollection),
+      verifyFirebaseAuth(userCollection, null, { requireApproved: true }),
       upload.single("photo"),
       async (req, res) => {
         const { postId } = req.params;
@@ -617,7 +619,7 @@ async function connectToDatabase() {
 
           await targetCol.updateOne(
             { _id: new ObjectId(postId) },
-            { $set: update }
+            { $set: update },
           );
 
           res.status(200).json({ message: "Post updated successfully" });
@@ -627,13 +629,13 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // delete post data
     app.delete(
       "/posts/:postId",
-      verifyFirebaseAuth(userCollection),
+      verifyFirebaseAuth(userCollection, null, { requireApproved: true }),
       async (req, res) => {
         const { postId } = req.params;
         const { email } = req.user;
@@ -686,7 +688,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // get announcement data
@@ -715,7 +717,7 @@ async function connectToDatabase() {
                   user_type: user.userType,
                 },
               };
-            })
+            }),
           );
 
           res.status(200).json(combinedData);
@@ -725,7 +727,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // get notice data
@@ -754,7 +756,7 @@ async function connectToDatabase() {
                   user_type: user.userType,
                 },
               };
-            })
+            }),
           );
 
           res.status(200).json(combinedData);
@@ -764,44 +766,50 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Add or update a vote
-    app.post("/votes", verifyFirebaseAuth(userCollection), async (req, res) => {
-      const { postId, voteType } = req.body;
-      const { email } = req.user;
+    app.post(
+      "/votes",
+      verifyFirebaseAuth(userCollection, null, { requireApproved: true }),
+      async (req, res) => {
+        const { postId, voteType } = req.body;
+        const { email } = req.user;
 
-      try {
-        const existingVote = await voteCollection.findOne({
-          postId,
-          userEmail: email,
-        });
-
-        if (existingVote) {
-          if (existingVote.voteType === voteType) {
-            await voteCollection.deleteOne({ _id: existingVote._id });
-            return res.status(200).json({ message: "Vote removed" });
-          } else {
-            await voteCollection.updateOne(
-              { _id: existingVote._id },
-              { $set: { voteType } }
-            );
-            return res.status(200).json({ message: "Vote updated" });
-          }
-        } else {
-          await voteCollection.insertOne({
+        try {
+          const existingVote = await voteCollection.findOne({
             postId,
             userEmail: email,
-            voteType,
           });
-          return res.status(201).json({ message: "Vote added" });
+
+          if (existingVote) {
+            if (existingVote.voteType === voteType) {
+              await voteCollection.deleteOne({ _id: existingVote._id });
+              return res.status(200).json({ message: "Vote removed" });
+            } else {
+              await voteCollection.updateOne(
+                { _id: existingVote._id },
+                { $set: { voteType } },
+              );
+              return res.status(200).json({ message: "Vote updated" });
+            }
+          } else {
+            await voteCollection.insertOne({
+              postId,
+              userEmail: email,
+              voteType,
+            });
+            return res.status(201).json({ message: "Vote added" });
+          }
+        } catch (error) {
+          console.error("Error handling vote:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
         }
-      } catch (error) {
-        console.error("Error handling vote:", error.message);
-        res.status(500).json({ message: "Server error", error: error.message });
-      }
-    });
+      },
+    );
 
     // Get all votes
     app.get("/votes", verifyFirebaseAuth(userCollection), async (req, res) => {
@@ -840,7 +848,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Get total upvotes and downvotes for all posts
@@ -872,7 +880,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Get total comments count for all posts
@@ -892,7 +900,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Get total repost count for all posts
@@ -915,7 +923,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Get user activity from all collections (with original repost data)
@@ -999,13 +1007,13 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Delete a post and its related votes and comments
     app.delete(
       "/posts/:postId",
-      verifyFirebaseAuth(userCollection),
+      verifyFirebaseAuth(userCollection, null, { requireApproved: true }),
       async (req, res) => {
         const { postId } = req.params;
 
@@ -1028,7 +1036,7 @@ async function connectToDatabase() {
 
           // Check if a post was deleted
           const deleted = deleteResult.some(
-            (result) => result.deletedCount > 0
+            (result) => result.deletedCount > 0,
           );
 
           if (deleted) {
@@ -1041,19 +1049,19 @@ async function connectToDatabase() {
         } catch (error) {
           console.error(
             "Error deleting post, votes, and comments:",
-            error.message
+            error.message,
           );
           res
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Add a comment to any post (post/announcement/notice)
     app.post(
       "/comments",
-      verifyFirebaseAuth(userCollection),
+      verifyFirebaseAuth(userCollection, null, { requireApproved: true }),
       async (req, res) => {
         const { email } = req.user;
         const { postId, content } = req.body;
@@ -1082,7 +1090,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Get comments for a specific post
@@ -1112,7 +1120,7 @@ async function connectToDatabase() {
                   user_type: user?.userType,
                 },
               };
-            })
+            }),
           );
 
           res.status(200).json(commentsWithUserData);
@@ -1122,13 +1130,13 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Update a comment
     app.patch(
       "/comments/:commentId",
-      verifyFirebaseAuth(userCollection),
+      verifyFirebaseAuth(userCollection, null, { requireApproved: true }),
       async (req, res) => {
         const { commentId } = req.params;
         const { email } = req.user;
@@ -1160,7 +1168,7 @@ async function connectToDatabase() {
 
           await commentCollection.updateOne(
             { _id: new ObjectId(commentId) },
-            { $set: { content: content.trim(), editedAt: new Date() } }
+            { $set: { content: content.trim(), editedAt: new Date() } },
           );
 
           res.json({ message: "Comment updated successfully" });
@@ -1170,13 +1178,13 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Report a post
     app.post(
       "/reports",
-      verifyFirebaseAuth(userCollection),
+      verifyFirebaseAuth(userCollection, null, { requireApproved: true }),
       async (req, res) => {
         const { email } = req.user;
         const { postId, reason } = req.body;
@@ -1226,7 +1234,7 @@ async function connectToDatabase() {
           // Increment report count
           await collection.updateOne(
             { _id: new ObjectId(postId) },
-            { $inc: { reportCount: 1 } }
+            { $inc: { reportCount: 1 } },
           );
 
           res.status(201).json({ message: "Post reported successfully" });
@@ -1236,13 +1244,13 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Report a comment
     app.post(
       "/comment-reports",
-      verifyFirebaseAuth(userCollection),
+      verifyFirebaseAuth(userCollection, null, { requireApproved: true }),
       async (req, res) => {
         const { email } = req.user;
         const { commentId, reason } = req.body;
@@ -1290,7 +1298,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Get all reported posts for admin
@@ -1343,7 +1351,7 @@ async function connectToDatabase() {
                     reason: report.reason,
                     reportedAt: report.reportedAt,
                   };
-                })
+                }),
               );
 
               // Get post author details
@@ -1362,7 +1370,7 @@ async function connectToDatabase() {
                 reporters,
                 reportCount: reportDetails.length,
               };
-            })
+            }),
           );
 
           // Filter out null posts (if any)
@@ -1375,7 +1383,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Admin endpoint to delete a reported post
@@ -1403,7 +1411,7 @@ async function connectToDatabase() {
           ]);
 
           const deleted = deleteResult.some(
-            (result) => result.deletedCount > 0
+            (result) => result.deletedCount > 0,
           );
 
           if (deleted) {
@@ -1419,7 +1427,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Admin endpoint to dismiss reports for a post
@@ -1437,15 +1445,15 @@ async function connectToDatabase() {
           await Promise.all([
             postCollection.updateOne(
               { _id: new ObjectId(postId) },
-              { $set: { reportCount: 0 } }
+              { $set: { reportCount: 0 } },
             ),
             announcementCollection.updateOne(
               { _id: new ObjectId(postId) },
-              { $set: { reportCount: 0 } }
+              { $set: { reportCount: 0 } },
             ),
             noticetCollection.updateOne(
               { _id: new ObjectId(postId) },
-              { $set: { reportCount: 0 } }
+              { $set: { reportCount: 0 } },
             ),
           ]);
 
@@ -1459,13 +1467,13 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
 
     // Route to delete a comment
     app.delete(
       "/comments/:commentId",
-      verifyFirebaseAuth(userCollection),
+      verifyFirebaseAuth(userCollection, null, { requireApproved: true }),
       async (req, res) => {
         const { commentId } = req.params;
         const { email } = req.user; // Get user email from JWT
@@ -1509,7 +1517,7 @@ async function connectToDatabase() {
             .status(500)
             .json({ message: "Server error", error: error.message });
         }
-      }
+      },
     );
     //
     //
@@ -1518,7 +1526,7 @@ async function connectToDatabase() {
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
     console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
+      "Pinged your deployment. You successfully connected to MongoDB!",
     );
   } finally {
     // Ensures that the client will close when you finish/error
