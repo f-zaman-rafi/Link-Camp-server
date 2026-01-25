@@ -195,8 +195,47 @@ async function connectToDatabase() {
       "/admin/users",
       verifyFirebaseAuth(userCollection, ["admin"]),
       async (req, res) => {
-        const users = await userCollection.find().toArray();
-        res.json(users);
+        const {
+          role,
+          verify,
+          page = 1,
+          limit = 20,
+          sort = "name_asc",
+        } = req.query;
+
+        const filter = {};
+        if (role) filter.userType = role;
+        if (verify) filter.verify = verify;
+
+        const sortDir = sort === "name_desc" ? -1 : 1;
+
+        const skip = (Number(page) - 1) * Number(limit);
+
+        const users = await userCollection
+          .find(filter)
+          .sort({ name: sortDir })
+          .skip(skip)
+          .limit(Number(limit))
+          .toArray();
+
+        const total = await userCollection.countDocuments(filter);
+
+        res.json({ items: users, total });
+      },
+    );
+
+    app.get(
+      "/admin/users/:id",
+      verifyFirebaseAuth(userCollection, ["admin"]),
+      async (req, res) => {
+        const { id } = req.params;
+        if (!ObjectId.isValid(id))
+          return res.status(400).json({ message: "Invalid ID" });
+
+        const user = await userCollection.findOne({ _id: new ObjectId(id) });
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        res.json(user);
       },
     );
 
@@ -1307,78 +1346,153 @@ async function connectToDatabase() {
       verifyFirebaseAuth(userCollection, ["admin"]),
       async (req, res) => {
         try {
-          // Get all reports
+          const { page = 1, limit = 20, postId } = req.query;
+
           const reports = await reportCollection.find().toArray();
 
-          // Get unique post IDs from reports
-          const postIds = [...new Set(reports.map((report) => report.postId))];
+          const grouped = {};
+          for (const r of reports) {
+            if (!grouped[r.postId]) {
+              grouped[r.postId] = { count: 0, latest: r.reportedAt };
+            }
+            grouped[r.postId].count += 1;
+            if (r.reportedAt > grouped[r.postId].latest)
+              grouped[r.postId].latest = r.reportedAt;
+          }
 
-          // Fetch all posts (from all collections) that have been reported
-          const reportedPosts = await Promise.all(
-            postIds.map(async (postId) => {
-              // Check in each collection
-              let post = await postCollection.findOne({
-                _id: new ObjectId(postId),
-              });
-              let collectionType = "post";
+          let postIds = Object.keys(grouped);
+          if (postId) postIds = postIds.filter((id) => id === postId);
 
-              if (!post) {
-                post = await announcementCollection.findOne({
-                  _id: new ObjectId(postId),
-                });
-                collectionType = "announcement";
-              }
-
-              if (!post) {
-                post = await noticetCollection.findOne({
-                  _id: new ObjectId(postId),
-                });
-                collectionType = "notice";
-              }
-
-              if (!post) return null;
-
-              // Get reporter details
-              const reportDetails = reports.filter((r) => r.postId === postId);
-              const reporters = await Promise.all(
-                reportDetails.map(async (report) => {
-                  const user = await userCollection.findOne({
-                    email: report.reportedBy,
-                  });
-                  return {
-                    email: report.reportedBy,
-                    name: user?.name,
-                    reason: report.reason,
-                    reportedAt: report.reportedAt,
-                  };
-                }),
-              );
-
-              // Get post author details
-              const author = await userCollection.findOne({
-                email: post.email,
-              });
-
-              return {
-                ...post,
-                collectionType,
-                author: {
-                  name: author?.name,
-                  email: author?.email,
-                  userType: author?.userType,
-                },
-                reporters,
-                reportCount: reportDetails.length,
-              };
-            }),
+          postIds.sort(
+            (a, b) =>
+              new Date(grouped[b].latest).getTime() -
+              new Date(grouped[a].latest).getTime(),
           );
 
-          // Filter out null posts (if any)
-          const validPosts = reportedPosts.filter((post) => post !== null);
+          const total = postIds.length;
+          const skip = (Number(page) - 1) * Number(limit);
+          const pageIds = postIds.slice(skip, skip + Number(limit));
 
-          res.status(200).json(validPosts);
+          const objectIds = pageIds
+            .filter(ObjectId.isValid)
+            .map((id) => new ObjectId(id));
+
+          const [posts, anns, notices] = await Promise.all([
+            postCollection.find({ _id: { $in: objectIds } }).toArray(),
+            announcementCollection.find({ _id: { $in: objectIds } }).toArray(),
+            noticetCollection.find({ _id: { $in: objectIds } }).toArray(),
+          ]);
+
+          const all = [...posts, ...anns, ...notices];
+
+          const users = await userCollection
+            .find({ email: { $in: all.map((p) => p.email) } })
+            .toArray();
+          const userMap = {};
+          users.forEach((u) => (userMap[u.email] = u));
+
+          const items = all.map((p) => ({
+            ...p,
+            reportCount: grouped[p._id.toString()]?.count || 0,
+            user: userMap[p.email]
+              ? {
+                  name: userMap[p.email].name,
+                  userType: userMap[p.email].userType,
+                }
+              : null,
+          }));
+
+          res.json({ items, total });
         } catch (error) {
-          console.error("Error fetching reported posts:", error.message);
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      },
+    );
+
+    // Get all reported comments for admin
+    app.get(
+      "/admin/reported-comments",
+      verifyFirebaseAuth(userCollection, ["admin"]),
+      async (req, res) => {
+        try {
+          const { page = 1, limit = 20, commentId } = req.query;
+
+          const reports = await commentReportCollection.find().toArray();
+
+          const grouped = {};
+          for (const r of reports) {
+            if (!grouped[r.commentId]) {
+              grouped[r.commentId] = {
+                count: 0,
+                latest: r.reportedAt,
+                postId: r.postId,
+              };
+            }
+            grouped[r.commentId].count += 1;
+            if (r.reportedAt > grouped[r.commentId].latest)
+              grouped[r.commentId].latest = r.reportedAt;
+          }
+
+          let commentIds = Object.keys(grouped);
+          if (commentId)
+            commentIds = commentIds.filter((id) => id === commentId);
+
+          commentIds.sort(
+            (a, b) =>
+              new Date(grouped[b].latest).getTime() -
+              new Date(grouped[a].latest).getTime(),
+          );
+
+          const total = commentIds.length;
+          const skip = (Number(page) - 1) * Number(limit);
+          const pageIds = commentIds.slice(skip, skip + Number(limit));
+          const objectIds = pageIds
+            .filter(ObjectId.isValid)
+            .map((id) => new ObjectId(id));
+
+          const comments = await commentCollection
+            .find({ _id: { $in: objectIds } })
+            .toArray();
+
+          const postIds = [
+            ...new Set(comments.map((c) => c.postId).filter(Boolean)),
+          ];
+          const postObjIds = postIds
+            .filter(ObjectId.isValid)
+            .map((id) => new ObjectId(id));
+
+          const [posts, anns, notices] = await Promise.all([
+            postCollection.find({ _id: { $in: postObjIds } }).toArray(),
+            announcementCollection.find({ _id: { $in: postObjIds } }).toArray(),
+            noticetCollection.find({ _id: { $in: postObjIds } }).toArray(),
+          ]);
+          const postMap = {};
+          [...posts, ...anns, ...notices].forEach(
+            (p) => (postMap[p._id.toString()] = p),
+          );
+
+          const users = await userCollection
+            .find({ email: { $in: comments.map((c) => c.email) } })
+            .toArray();
+          const userMap = {};
+          users.forEach((u) => (userMap[u.email] = u));
+
+          const items = comments.map((c) => ({
+            ...c,
+            reportCount: grouped[c._id.toString()]?.count || 0,
+            post: postMap[c.postId] || null,
+            user: userMap[c.email]
+              ? {
+                  name: userMap[c.email].name,
+                  userType: userMap[c.email].userType,
+                }
+              : null,
+          }));
+
+          res.json({ items, total });
+        } catch (error) {
           res
             .status(500)
             .json({ message: "Server error", error: error.message });
@@ -1519,6 +1633,33 @@ async function connectToDatabase() {
         }
       },
     );
+
+    //Route to delete a comment by admin
+    app.delete(
+      "/admin/reported-comments/:commentId",
+      verifyFirebaseAuth(userCollection, ["admin"]),
+      async (req, res) => {
+        const { commentId } = req.params;
+        if (!ObjectId.isValid(commentId))
+          return res.status(400).json({ message: "Invalid comment ID" });
+
+        await commentReportCollection.deleteMany({ commentId });
+        await commentCollection.deleteOne({ _id: new ObjectId(commentId) });
+
+        res.json({ message: "Comment and reports deleted" });
+      },
+    );
+
+    app.delete(
+      "/admin/reported-comments/:commentId/dismiss",
+      verifyFirebaseAuth(userCollection, ["admin"]),
+      async (req, res) => {
+        const { commentId } = req.params;
+        await commentReportCollection.deleteMany({ commentId });
+        res.json({ message: "Comment reports dismissed" });
+      },
+    );
+
     //
     //
     //
