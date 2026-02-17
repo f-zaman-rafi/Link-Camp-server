@@ -534,7 +534,7 @@ async function connectToDatabase() {
     app.get("/posts", verifyFirebaseAuth(userCollection), async (req, res) => {
       try {
         // Fetch all posts from postCollection
-        const posts = await postCollection.find().toArray();
+        const posts = await postCollection.find().sort({ createdAt: -1 }).toArray();
 
         // Fetch user data for each post
         const combinedData = await Promise.all(
@@ -738,7 +738,7 @@ async function connectToDatabase() {
       async (req, res) => {
         try {
           // Fetch all announces from announceCollection
-          const posts = await announcementCollection.find().toArray();
+          const posts = await announcementCollection.find().sort({ createdAt: -1 }).toArray();
 
           const combinedData = await Promise.all(
             posts.map(async (post) => {
@@ -777,7 +777,7 @@ async function connectToDatabase() {
       async (req, res) => {
         try {
           // Fetch all notice from noticeCollection
-          const posts = await noticetCollection.find().toArray();
+          const posts = await noticetCollection.find().sort({ createdAt: -1 }).toArray();
 
           const combinedData = await Promise.all(
             posts.map(async (post) => {
@@ -974,9 +974,9 @@ async function connectToDatabase() {
 
         try {
           const [posts, announcements, notices] = await Promise.all([
-            postCollection.find({ email }).toArray(),
-            announcementCollection.find({ email }).toArray(),
-            noticetCollection.find({ email }).toArray(),
+            postCollection.find({ email }).sort({ createdAt: -1 }).toArray(),
+            announcementCollection.find({ email }).sort({ createdAt: -1 }).toArray(),
+            noticetCollection.find({ email }).sort({ createdAt: -1 }).toArray(),
           ]);
 
           const allPosts = [...posts, ...announcements, ...notices];
@@ -1037,6 +1037,10 @@ async function connectToDatabase() {
               };
             }
             return base;
+          }).sort((a, b) => {
+            const aTime = new Date(a.createdAt || 0).getTime();
+            const bTime = new Date(b.createdAt || 0).getTime();
+            return bTime - aTime;
           });
 
           res.status(200).json(combined);
