@@ -58,7 +58,7 @@ const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
     folder: "linkcamp_uploads", // Cloudinary folder for uploads
-    allowed_formats: ["jpg", "png", "jpeg", "webp"], // Allowed image formats
+    allowed_formats: ["jpg", "png", "jpeg", "webp", "avif"], // Allowed image formats
   },
 });
 
