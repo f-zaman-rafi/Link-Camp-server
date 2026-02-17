@@ -49,17 +49,35 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Configure Cloudinary storage for Multer
+// Cloudinary storage config for image uploads
 const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: "linkcamp_uploads", // Cloudinary folder for uploads
-    allowed_formats: ["jpg", "png", "jpeg", "webp", "avif"], // Allowed image formats
-  },
+  cloudinary,
+  params: async (req, file) => ({
+    folder: "linkcamp_uploads",
+    resource_type: "image",
+    allowed_formats: ["jpg", "jpeg", "png", "webp", "avif"],
+    transformation: [
+      { width: 1600, height: 1600, crop: "limit" }, // limit max size
+      { fetch_format: "auto", quality: "auto:good" }, // optimize output
+    ],
+  }),
 });
 
-// Create Multer instance with Cloudinary storage
-const upload = multer({ storage });
+// Multer middleware for handling uploads to Cloudinary
+const upload = multer({
+  storage,
+
+  // Reject files larger than 8MB (original upload size)
+  limits: { fileSize: 8 * 1024 * 1024 },
+
+  // Allow only image uploads (based on MIME type)
+  fileFilter: (req, file, cb) => {
+    const ok = /^image\/(jpeg|jpg|png|webp|avif)$/i.test(file.mimetype);
+
+    // If not an allowed image type, stop the upload with an error
+    cb(ok ? null : new Error("Only image files are allowed"), ok);
+  },
+});
 
 // module.exports = upload;
 
@@ -1643,10 +1661,6 @@ async function connectToDatabase() {
       },
     );
 
-    //
-    //
-    //
-    //
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
     console.log(
@@ -1711,6 +1725,14 @@ app.get("/", (req, res) => {
       </body>
     </html>
   `);
+});
+
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+    return res.status(400).json({ message: "Image too large (max 8MB)" });
+  }
+  if (err) return res.status(400).json({ message: err.message });
+  next();
 });
 
 app.listen(port, "0.0.0.0", () => {
