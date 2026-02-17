@@ -25,11 +25,7 @@ app.use(express.json());
 
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173",
-      "https://link-camp.netlify.app",
-      "http://localhost:8081",
-    ],
+    origin: ["http://localhost:8081", "https://linkcamp.vercel.app"],
     credentials: true,
   }),
 );
@@ -65,21 +61,10 @@ const storage = new CloudinaryStorage({
 // Create Multer instance with Cloudinary storage
 const upload = multer({ storage });
 
-// // Cookie options for HTTP-only, secure, same-site, and max age
-// const cookieOption = {
-//   httpOnly: true,
-//   secure: false,
-//   sameSite: "lax",
-//   maxAge: 7 * 24 * 60 * 60 * 1000,
-// };
-
 // module.exports = upload;
 
 async function connectToDatabase() {
   try {
-    // Connect the client to the server
-    // await client.connect();
-
     // collection to store users data
     const userCollection = client.db("linkcamp").collection("users");
 
@@ -110,26 +95,6 @@ async function connectToDatabase() {
 
     // Initialize router
     const router = express.Router();
-
-    // Route to fetch user details by email
-    // router.get(
-    //   "/user/:email",
-    //   verifyFirebaseAuth(userCollection),
-    //   async (req, res) => {
-    //     const email = req.params.email;
-
-    //     // Fetch user from the database
-    //     const user = await userCollection.findOne({ email });
-
-    //     // Return 404 if user not found
-    //     if (!user) {
-    //       return res.status(404).json({ message: "User not found" });
-    //     }
-
-    //     // Respond with the user data
-    //     res.status(200).json(user);
-    //   }
-    // );
 
     // Mount router to API path
     app.use("/api", router);
@@ -534,7 +499,10 @@ async function connectToDatabase() {
     app.get("/posts", verifyFirebaseAuth(userCollection), async (req, res) => {
       try {
         // Fetch all posts from postCollection
-        const posts = await postCollection.find().sort({ createdAt: -1 }).toArray();
+        const posts = await postCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .toArray();
 
         // Fetch user data for each post
         const combinedData = await Promise.all(
@@ -738,7 +706,10 @@ async function connectToDatabase() {
       async (req, res) => {
         try {
           // Fetch all announces from announceCollection
-          const posts = await announcementCollection.find().sort({ createdAt: -1 }).toArray();
+          const posts = await announcementCollection
+            .find()
+            .sort({ createdAt: -1 })
+            .toArray();
 
           const combinedData = await Promise.all(
             posts.map(async (post) => {
@@ -777,7 +748,10 @@ async function connectToDatabase() {
       async (req, res) => {
         try {
           // Fetch all notice from noticeCollection
-          const posts = await noticetCollection.find().sort({ createdAt: -1 }).toArray();
+          const posts = await noticetCollection
+            .find()
+            .sort({ createdAt: -1 })
+            .toArray();
 
           const combinedData = await Promise.all(
             posts.map(async (post) => {
@@ -975,7 +949,10 @@ async function connectToDatabase() {
         try {
           const [posts, announcements, notices] = await Promise.all([
             postCollection.find({ email }).sort({ createdAt: -1 }).toArray(),
-            announcementCollection.find({ email }).sort({ createdAt: -1 }).toArray(),
+            announcementCollection
+              .find({ email })
+              .sort({ createdAt: -1 })
+              .toArray(),
             noticetCollection.find({ email }).sort({ createdAt: -1 }).toArray(),
           ]);
 
@@ -1028,20 +1005,22 @@ async function connectToDatabase() {
             };
           };
 
-          const combined = allPosts.map((p) => {
-            const base = withUser(p);
-            if (p.repostOf && originalMap[p.repostOf]) {
-              return {
-                ...base,
-                originalPost: withUser(originalMap[p.repostOf]),
-              };
-            }
-            return base;
-          }).sort((a, b) => {
-            const aTime = new Date(a.createdAt || 0).getTime();
-            const bTime = new Date(b.createdAt || 0).getTime();
-            return bTime - aTime;
-          });
+          const combined = allPosts
+            .map((p) => {
+              const base = withUser(p);
+              if (p.repostOf && originalMap[p.repostOf]) {
+                return {
+                  ...base,
+                  originalPost: withUser(originalMap[p.repostOf]),
+                };
+              }
+              return base;
+            })
+            .sort((a, b) => {
+              const aTime = new Date(a.createdAt || 0).getTime();
+              const bTime = new Date(b.createdAt || 0).getTime();
+              return bTime - aTime;
+            });
 
           res.status(200).json(combined);
         } catch (error) {
