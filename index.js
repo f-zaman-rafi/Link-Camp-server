@@ -2,6 +2,8 @@ const admin = require("firebase-admin");
 require("dotenv").config(); // Load environment variables from .env file
 const express = require("express"); // Import Express.js framework
 const cors = require("cors"); // Import CORS middleware for handling cross-origin requests
+const http = require("http");
+const { Server } = require("socket.io");
 const port = process.env.PORT || 5001; // Define server port, default to 5000
 const { MongoClient, ServerApiVersion } = require("mongodb"); // Import MongoDB client and API version
 // const cookieParser = require("cookie-parser"); // Import middleware for parsing cookies
@@ -22,13 +24,41 @@ admin.initializeApp({
 const app = express();
 app.use(express.json());
 // app.use(cookieParser());
+const allowedOrigins = ["http://localhost:8081", "https://linkcamp.vercel.app"];
 
 app.use(
   cors({
-    origin: ["http://localhost:8081", "https://linkcamp.vercel.app"],
+    origin: allowedOrigins,
     credentials: true,
   }),
 );
+
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: allowedOrigins,
+    credentials: true,
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+  },
+});
+
+io.use(async (socket, next) => {
+  try {
+    const authToken =
+      socket.handshake.auth?.token ||
+      socket.handshake.headers?.authorization?.replace(/^Bearer\s+/i, "");
+
+    if (!authToken) {
+      return next(new Error("UNAUTHORIZED"));
+    }
+
+    const decoded = await admin.auth().verifyIdToken(authToken);
+    socket.user = decoded;
+    next();
+  } catch (error) {
+    next(new Error("UNAUTHORIZED"));
+  }
+});
 
 // MongoDB connection URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.sgxrfxf.mongodb.net/?appName=Cluster0`;
@@ -110,6 +140,184 @@ async function connectToDatabase() {
     const commentReportCollection = client
       .db("linkcamp")
       .collection("commentReports");
+
+    // Ensure hot paths are indexed for feed and count lookups
+    await Promise.all([
+      postCollection.createIndex({ createdAt: -1 }),
+      announcementCollection.createIndex({ createdAt: -1 }),
+      noticetCollection.createIndex({ createdAt: -1 }),
+      postCollection.createIndex({ email: 1, createdAt: -1 }),
+      announcementCollection.createIndex({ email: 1, createdAt: -1 }),
+      noticetCollection.createIndex({ email: 1, createdAt: -1 }),
+      voteCollection.createIndex({ postId: 1 }),
+      voteCollection.createIndex({ userEmail: 1, postId: 1 }),
+      commentCollection.createIndex({ postId: 1, createdAt: 1 }),
+      commentCollection.createIndex({ email: 1, createdAt: -1 }),
+    ]);
+
+    const parseIdsParam = (rawIds) => {
+      if (!rawIds || typeof rawIds !== "string") return [];
+      return [...new Set(rawIds.split(",").map((id) => id.trim()).filter(Boolean))];
+    };
+
+    const toUserPublic = (user) =>
+      user
+        ? {
+            name: user.name,
+            photo: user.photo,
+            user_type: user.userType,
+          }
+        : undefined;
+
+    const attachUsersToPosts = async (items) => {
+      if (!items?.length) return [];
+      const emails = [...new Set(items.map((post) => post.email).filter(Boolean))];
+      if (!emails.length) return items;
+
+      const users = await userCollection
+        .find({ email: { $in: emails } })
+        .project({ email: 1, name: 1, photo: 1, userType: 1 })
+        .toArray();
+
+      const userMap = new Map(users.map((user) => [user.email, user]));
+
+      return items.map((post) => ({
+        ...post,
+        user: toUserPublic(userMap.get(post.email)),
+      }));
+    };
+
+    const normalizePostType = (post, fallbackType = "general") =>
+      post?.postType || fallbackType;
+
+    const serializePost = (post, userDoc, fallbackType = "general") => ({
+      ...post,
+      _id: post?._id?.toString?.() || post?._id,
+      repostOf: post?.repostOf ? post.repostOf.toString() : null,
+      postType: normalizePostType(post, fallbackType),
+      user: userDoc ? toUserPublic(userDoc) : post?.user,
+    });
+
+    const serializeComment = (comment, userDoc) => ({
+      ...comment,
+      _id: comment?._id?.toString?.() || comment?._id,
+      postId: comment?.postId?.toString?.() || comment?.postId,
+      user: userDoc ? toUserPublic(userDoc) : comment?.user,
+    });
+
+    const parsePagination = (query = {}) => {
+      const hasLimit = query.limit !== undefined;
+      const hasCursor = query.cursor !== undefined;
+      const hasType = query.type !== undefined;
+      const paginated = hasLimit || hasCursor || hasType;
+
+      const parsedLimit = Number(query.limit);
+      const limit = Number.isFinite(parsedLimit)
+        ? Math.min(50, Math.max(1, parsedLimit))
+        : 20;
+
+      const cursorDate = query.cursor ? new Date(query.cursor) : null;
+      const cursor =
+        cursorDate && !Number.isNaN(cursorDate.getTime()) ? cursorDate : null;
+
+      const type =
+        query.type === "teacher" || query.type === "admin" ? query.type : "all";
+
+      return { paginated, limit, cursor, type };
+    };
+
+    const buildPaginatedResponse = (items, limit) => {
+      const last = items[items.length - 1];
+      const nextCursor =
+        items.length === limit && last?.createdAt
+          ? new Date(last.createdAt).toISOString()
+          : null;
+
+      return { items, nextCursor };
+    };
+
+    const resolvePostMeta = async (postId) => {
+      if (!postId || !ObjectId.isValid(postId)) return null;
+      const objectId = new ObjectId(postId);
+
+      const collections = [
+        { col: postCollection, fallbackType: "general" },
+        { col: announcementCollection, fallbackType: "teacher" },
+        { col: noticetCollection, fallbackType: "admin" },
+      ];
+
+      for (const item of collections) {
+        const post = await item.col.findOne({ _id: objectId });
+        if (post) {
+          return {
+            post,
+            postType: normalizePostType(post, item.fallbackType),
+            email: post.email,
+          };
+        }
+      }
+
+      return null;
+    };
+
+    const emitFeedEvent = (event, payload, postType) => {
+      if (postType === "teacher") {
+        io.to("feed:teacher").emit(event, payload);
+      } else if (postType === "admin") {
+        io.to("feed:admin").emit(event, payload);
+      }
+
+      io.to("feed:all").emit(event, payload);
+    };
+
+    const emitUserUpdated = (userDoc) => {
+      if (!userDoc?.email) return;
+
+      const payload = {
+        email: userDoc.email,
+        name: userDoc.name || null,
+        photo: userDoc.photo || null,
+        userType: userDoc.userType || null,
+      };
+
+      io
+        .to("feed:all")
+        .to("feed:teacher")
+        .to("feed:admin")
+        .to(`user:${userDoc.email}`)
+        .emit("user:updated", payload);
+    };
+
+    io.on("connection", (socket) => {
+      const email = socket.user?.email;
+      if (email) {
+        socket.join(`user:${email}`);
+      }
+
+      socket.on("feed:subscribe", (feedType) => {
+        if (feedType === "all" || feedType === "teacher" || feedType === "admin") {
+          socket.join(`feed:${feedType}`);
+        }
+      });
+
+      socket.on("feed:unsubscribe", (feedType) => {
+        if (feedType === "all" || feedType === "teacher" || feedType === "admin") {
+          socket.leave(`feed:${feedType}`);
+        }
+      });
+
+      socket.on("post:join", (postId) => {
+        if (typeof postId === "string" && postId.trim()) {
+          socket.join(`post:${postId}`);
+        }
+      });
+
+      socket.on("post:leave", (postId) => {
+        if (typeof postId === "string" && postId.trim()) {
+          socket.leave(`post:${postId}`);
+        }
+      });
+    });
 
     // Initialize router
     const router = express.Router();
@@ -279,6 +487,9 @@ async function connectToDatabase() {
             return res.status(404).json({ message: "User not found" });
           }
 
+          const updatedUser = await userCollection.findOne({ email });
+          emitUserUpdated(updatedUser);
+
           res.status(200).json({ message: "Name updated successfully" });
         } catch (error) {
           console.error("Error updating name:", error.message);
@@ -363,6 +574,7 @@ async function connectToDatabase() {
           }
 
           const updatedUser = await userCollection.findOne({ email });
+          emitUserUpdated(updatedUser);
           res
             .status(200)
             .json({ message: "Profile updated", user: updatedUser });
@@ -418,6 +630,30 @@ async function connectToDatabase() {
           };
 
           const result = await postCollection.insertOne(post);
+          const userDoc = await userCollection.findOne({ email });
+          const createdPost = serializePost(
+            { ...post, _id: result.insertedId },
+            userDoc,
+            "general",
+          );
+
+          emitFeedEvent("post:created", { post: createdPost }, createdPost.postType);
+
+          if (createdPost.repostOf) {
+            emitFeedEvent(
+              "repost:created",
+              {
+                postId: createdPost.repostOf,
+                repostId: createdPost._id,
+                createdAt: createdPost.createdAt,
+              },
+              createdPost.postType,
+            );
+          }
+
+          if (email) {
+            io.to(`user:${email}`).emit("post:created", { post: createdPost });
+          }
 
           res.status(201).json({
             message: "Post Created Successfully",
@@ -456,9 +692,21 @@ async function connectToDatabase() {
             email,
             content: content || null,
             photo: photoURL || null,
+            postType: "teacher",
             createdAt: new Date(),
           };
           const result = await announcementCollection.insertOne(post);
+          const userDoc = await userCollection.findOne({ email });
+          const createdPost = serializePost(
+            { ...post, _id: result.insertedId },
+            userDoc,
+            "teacher",
+          );
+
+          emitFeedEvent("post:created", { post: createdPost }, "teacher");
+          if (email) {
+            io.to(`user:${email}`).emit("post:created", { post: createdPost });
+          }
 
           res.status(201).json({
             message: "announcement Created Successfully",
@@ -495,9 +743,21 @@ async function connectToDatabase() {
             email,
             content: content || null,
             photo: photoURL || null,
+            postType: "admin",
             createdAt: new Date(),
           };
           const result = await noticetCollection.insertOne(post);
+          const userDoc = await userCollection.findOne({ email });
+          const createdPost = serializePost(
+            { ...post, _id: result.insertedId },
+            userDoc,
+            "admin",
+          );
+
+          emitFeedEvent("post:created", { post: createdPost }, "admin");
+          if (email) {
+            io.to(`user:${email}`).emit("post:created", { post: createdPost });
+          }
 
           res.status(201).json({
             message: "notice Created Successfully",
@@ -516,31 +776,30 @@ async function connectToDatabase() {
 
     app.get("/posts", verifyFirebaseAuth(userCollection), async (req, res) => {
       try {
-        // Fetch all posts from postCollection
-        const posts = await postCollection
-          .find()
-          .sort({ createdAt: -1 })
-          .toArray();
+        const { paginated, limit, cursor, type } = parsePagination(req.query);
+        const filter = {};
 
-        // Fetch user data for each post
-        const combinedData = await Promise.all(
-          posts.map(async (post) => {
-            const user = await userCollection.findOne({ email: post.email });
+        if (type === "teacher") {
+          filter.postType = "teacher";
+        } else if (type === "admin") {
+          filter.postType = "admin";
+        }
 
-            if (!user) {
-              throw new Error(`User not found for email: ${post.email}`);
-            }
+        if (cursor) {
+          filter.createdAt = { $lt: cursor };
+        }
 
-            return {
-              ...post,
-              user: {
-                name: user.name,
-                photo: user.photo,
-                user_type: user.userType,
-              },
-            };
-          }),
-        );
+        let query = postCollection.find(filter).sort({ createdAt: -1 });
+        if (paginated) {
+          query = query.limit(limit);
+        }
+
+        const posts = await query.toArray();
+        const combinedData = await attachUsersToPosts(posts);
+
+        if (paginated) {
+          return res.status(200).json(buildPaginatedResponse(combinedData, limit));
+        }
 
         res.status(200).json(combinedData);
       } catch (error) {
@@ -647,6 +906,26 @@ async function connectToDatabase() {
             { $set: update },
           );
 
+          const updatedPost = await targetCol.findOne({ _id: new ObjectId(postId) });
+          const refreshedUserDoc = await userCollection.findOne({ email: post.email });
+          const fallbackType =
+            targetCol === announcementCollection
+              ? "teacher"
+              : targetCol === noticetCollection
+                ? "admin"
+                : "general";
+          const updatedPayload = serializePost(
+            updatedPost || { ...post, ...update, _id: new ObjectId(postId) },
+            refreshedUserDoc,
+            fallbackType,
+          );
+
+          emitFeedEvent("post:updated", { post: updatedPayload }, updatedPayload.postType);
+
+          if (post.email) {
+            io.to(`user:${post.email}`).emit("post:updated", { post: updatedPayload });
+          }
+
           res.status(200).json({ message: "Post updated successfully" });
         } catch (error) {
           console.error("Error updating post:", error.message);
@@ -704,6 +983,26 @@ async function connectToDatabase() {
 
           await targetCol.deleteOne({ _id: new ObjectId(postId) });
 
+          const deletedPostType = normalizePostType(
+            post,
+            targetCol === announcementCollection
+              ? "teacher"
+              : targetCol === noticetCollection
+                ? "admin"
+                : "general",
+          );
+
+          const deletedPayload = {
+            postId,
+            postType: deletedPostType,
+            email: post.email,
+          };
+
+          emitFeedEvent("post:deleted", deletedPayload, deletedPostType);
+          if (post.email) {
+            io.to(`user:${post.email}`).emit("post:deleted", deletedPayload);
+          }
+
           res.status(200).json({
             message: "Post, votes, and comments deleted successfully",
           });
@@ -723,30 +1022,41 @@ async function connectToDatabase() {
       verifyFirebaseAuth(userCollection),
       async (req, res) => {
         try {
-          // Fetch all announces from announceCollection
-          const posts = await announcementCollection
-            .find()
-            .sort({ createdAt: -1 })
-            .toArray();
+          const { paginated, limit, cursor } = parsePagination(req.query);
+          const baseFilter = cursor ? { createdAt: { $lt: cursor } } : {};
 
-          const combinedData = await Promise.all(
-            posts.map(async (post) => {
-              const user = await userCollection.findOne({ email: post.email });
+          let annQuery = announcementCollection.find(baseFilter).sort({ createdAt: -1 });
+          let typedPostQuery = postCollection
+            .find({ ...baseFilter, postType: "teacher" })
+            .sort({ createdAt: -1 });
 
-              if (!user) {
-                throw new Error(`User not found for email: ${post.email}`);
-              }
+          if (paginated) {
+            annQuery = annQuery.limit(limit);
+            typedPostQuery = typedPostQuery.limit(limit);
+          }
 
-              return {
-                ...post,
-                user: {
-                  name: user.name,
-                  photo: user.photo,
-                  user_type: user.userType,
-                },
-              };
-            }),
-          );
+          const [legacyAnnouncements, typedTeacherPosts] = await Promise.all([
+            annQuery.toArray(),
+            typedPostQuery.toArray(),
+          ]);
+
+          const merged = [...legacyAnnouncements, ...typedTeacherPosts]
+            .map((post) => ({
+              ...post,
+              postType: normalizePostType(post, "teacher"),
+            }))
+            .sort((a, b) => {
+              const aTime = new Date(a.createdAt || 0).getTime();
+              const bTime = new Date(b.createdAt || 0).getTime();
+              return bTime - aTime;
+            });
+
+          const normalized = paginated ? merged.slice(0, limit) : merged;
+          const combinedData = await attachUsersToPosts(normalized);
+
+          if (paginated) {
+            return res.status(200).json(buildPaginatedResponse(combinedData, limit));
+          }
 
           res.status(200).json(combinedData);
         } catch (error) {
@@ -765,30 +1075,41 @@ async function connectToDatabase() {
       verifyFirebaseAuth(userCollection),
       async (req, res) => {
         try {
-          // Fetch all notice from noticeCollection
-          const posts = await noticetCollection
-            .find()
-            .sort({ createdAt: -1 })
-            .toArray();
+          const { paginated, limit, cursor } = parsePagination(req.query);
+          const baseFilter = cursor ? { createdAt: { $lt: cursor } } : {};
 
-          const combinedData = await Promise.all(
-            posts.map(async (post) => {
-              const user = await userCollection.findOne({ email: post.email });
+          let noticeQuery = noticetCollection.find(baseFilter).sort({ createdAt: -1 });
+          let typedPostQuery = postCollection
+            .find({ ...baseFilter, postType: "admin" })
+            .sort({ createdAt: -1 });
 
-              if (!user) {
-                throw new Error(`User not found for email: ${post.email}`);
-              }
+          if (paginated) {
+            noticeQuery = noticeQuery.limit(limit);
+            typedPostQuery = typedPostQuery.limit(limit);
+          }
 
-              return {
-                ...post,
-                user: {
-                  name: user.name,
-                  photo: user.photo,
-                  user_type: user.userType,
-                },
-              };
-            }),
-          );
+          const [legacyNotices, typedAdminPosts] = await Promise.all([
+            noticeQuery.toArray(),
+            typedPostQuery.toArray(),
+          ]);
+
+          const merged = [...legacyNotices, ...typedAdminPosts]
+            .map((post) => ({
+              ...post,
+              postType: normalizePostType(post, "admin"),
+            }))
+            .sort((a, b) => {
+              const aTime = new Date(a.createdAt || 0).getTime();
+              const bTime = new Date(b.createdAt || 0).getTime();
+              return bTime - aTime;
+            });
+
+          const normalized = paginated ? merged.slice(0, limit) : merged;
+          const combinedData = await attachUsersToPosts(normalized);
+
+          if (paginated) {
+            return res.status(200).json(buildPaginatedResponse(combinedData, limit));
+          }
 
           res.status(200).json(combinedData);
         } catch (error) {
@@ -807,23 +1128,30 @@ async function connectToDatabase() {
       async (req, res) => {
         const { postId, voteType } = req.body;
         const { email } = req.user;
+        const originSocketId =
+          typeof req.body?.originSocketId === "string" &&
+          req.body.originSocketId.trim()
+            ? req.body.originSocketId.trim()
+            : null;
 
         try {
           const existingVote = await voteCollection.findOne({
             postId,
             userEmail: email,
           });
+          const previousVote = existingVote?.voteType || null;
+          let nextVote = null;
 
           if (existingVote) {
             if (existingVote.voteType === voteType) {
               await voteCollection.deleteOne({ _id: existingVote._id });
-              return res.status(200).json({ message: "Vote removed" });
+              nextVote = null;
             } else {
               await voteCollection.updateOne(
                 { _id: existingVote._id },
                 { $set: { voteType } },
               );
-              return res.status(200).json({ message: "Vote updated" });
+              nextVote = voteType;
             }
           } else {
             await voteCollection.insertOne({
@@ -831,8 +1159,36 @@ async function connectToDatabase() {
               userEmail: email,
               voteType,
             });
-            return res.status(201).json({ message: "Vote added" });
+            nextVote = voteType;
           }
+
+          const postMeta = await resolvePostMeta(postId);
+          const votePayload = {
+            postId,
+            userEmail: email,
+            previousVote,
+            voteType: nextVote,
+            originSocketId,
+          };
+
+          let voteEmitter = io.to("feed:all");
+          if (postMeta?.postType === "teacher") {
+            voteEmitter = voteEmitter.to("feed:teacher");
+          } else if (postMeta?.postType === "admin") {
+            voteEmitter = voteEmitter.to("feed:admin");
+          }
+          if (postMeta?.email) {
+            voteEmitter = voteEmitter.to(`user:${postMeta.email}`);
+          }
+          voteEmitter.emit("vote:changed", votePayload);
+
+          if (previousVote && !nextVote) {
+            return res.status(200).json({ message: "Vote removed" });
+          }
+          if (previousVote && nextVote) {
+            return res.status(200).json({ message: "Vote updated" });
+          }
+          return res.status(201).json({ message: "Vote added" });
         } catch (error) {
           console.error("Error handling vote:", error.message);
           res
@@ -847,7 +1203,14 @@ async function connectToDatabase() {
       const { email } = req.user; // Get the user's email from the verified token
 
       try {
-        const votes = await voteCollection.find({ userEmail: email }).toArray(); // Fetch all votes by the user
+        const ids = parseIdsParam(req.query?.ids);
+        const filter = { userEmail: email };
+
+        if (ids.length) {
+          filter.postId = { $in: ids };
+        }
+
+        const votes = await voteCollection.find(filter).toArray(); // Fetch votes by the user
         res.status(200).json(votes);
       } catch (error) {
         console.error("Error fetching votes:", error.message);
@@ -888,20 +1251,27 @@ async function connectToDatabase() {
       verifyFirebaseAuth(userCollection),
       async (req, res) => {
         try {
-          const voteCounts = await voteCollection
-            .aggregate([
-              {
-                $group: {
-                  _id: "$postId",
-                  upvotes: {
-                    $sum: { $cond: [{ $eq: ["$voteType", "upvote"] }, 1, 0] },
-                  },
-                  downvotes: {
-                    $sum: { $cond: [{ $eq: ["$voteType", "downvote"] }, 1, 0] },
-                  },
-                },
+          const ids = parseIdsParam(req.query?.ids);
+          const pipeline = [];
+
+          if (ids.length) {
+            pipeline.push({ $match: { postId: { $in: ids } } });
+          }
+
+          pipeline.push({
+            $group: {
+              _id: "$postId",
+              upvotes: {
+                $sum: { $cond: [{ $eq: ["$voteType", "upvote"] }, 1, 0] },
               },
-            ])
+              downvotes: {
+                $sum: { $cond: [{ $eq: ["$voteType", "downvote"] }, 1, 0] },
+              },
+            },
+          });
+
+          const voteCounts = await voteCollection
+            .aggregate(pipeline)
             .toArray();
 
           res.status(200).json(voteCounts);
@@ -920,8 +1290,17 @@ async function connectToDatabase() {
       verifyFirebaseAuth(userCollection),
       async (req, res) => {
         try {
+          const ids = parseIdsParam(req.query?.ids);
+          const pipeline = [];
+
+          if (ids.length) {
+            pipeline.push({ $match: { postId: { $in: ids } } });
+          }
+
+          pipeline.push({ $group: { _id: "$postId", count: { $sum: 1 } } });
+
           const counts = await commentCollection
-            .aggregate([{ $group: { _id: "$postId", count: { $sum: 1 } } }])
+            .aggregate(pipeline)
             .toArray();
 
           res.status(200).json(counts);
@@ -940,9 +1319,15 @@ async function connectToDatabase() {
       verifyFirebaseAuth(userCollection),
       async (req, res) => {
         try {
+          const ids = parseIdsParam(req.query?.ids);
+          const match = { repostOf: { $exists: true, $ne: null } };
+          if (ids.length) {
+            match.repostOf.$in = ids;
+          }
+
           const counts = await postCollection
             .aggregate([
-              { $match: { repostOf: { $exists: true, $ne: null } } },
+              { $match: match },
               { $group: { _id: "$repostOf", count: { $sum: 1 } } },
             ])
             .toArray();
@@ -965,16 +1350,46 @@ async function connectToDatabase() {
         const { email } = req.params;
 
         try {
+          const { paginated, limit, cursor } = parsePagination(req.query);
+          const filter = cursor
+            ? { email, createdAt: { $lt: cursor } }
+            : { email };
+
+          const queryLimit = paginated ? limit : 0;
+
           const [posts, announcements, notices] = await Promise.all([
-            postCollection.find({ email }).sort({ createdAt: -1 }).toArray(),
-            announcementCollection
-              .find({ email })
-              .sort({ createdAt: -1 })
-              .toArray(),
-            noticetCollection.find({ email }).sort({ createdAt: -1 }).toArray(),
+            queryLimit
+              ? postCollection.find(filter).sort({ createdAt: -1 }).limit(queryLimit).toArray()
+              : postCollection.find(filter).sort({ createdAt: -1 }).toArray(),
+            queryLimit
+              ? announcementCollection
+                  .find(filter)
+                  .sort({ createdAt: -1 })
+                  .limit(queryLimit)
+                  .toArray()
+              : announcementCollection
+                  .find(filter)
+                  .sort({ createdAt: -1 })
+                  .toArray(),
+            queryLimit
+              ? noticetCollection.find(filter).sort({ createdAt: -1 }).limit(queryLimit).toArray()
+              : noticetCollection.find(filter).sort({ createdAt: -1 }).toArray(),
           ]);
 
-          const allPosts = [...posts, ...announcements, ...notices];
+          const allPosts = [
+            ...posts.map((post) => ({
+              ...post,
+              postType: normalizePostType(post, "general"),
+            })),
+            ...announcements.map((post) => ({
+              ...post,
+              postType: normalizePostType(post, "teacher"),
+            })),
+            ...notices.map((post) => ({
+              ...post,
+              postType: normalizePostType(post, "admin"),
+            })),
+          ];
 
           const repostIds = [
             ...new Set(allPosts.map((p) => p.repostOf).filter(Boolean)),
@@ -1040,57 +1455,14 @@ async function connectToDatabase() {
               return bTime - aTime;
             });
 
+          if (paginated) {
+            const pageItems = combined.slice(0, limit);
+            return res.status(200).json(buildPaginatedResponse(pageItems, limit));
+          }
+
           res.status(200).json(combined);
         } catch (error) {
           console.error("Error fetching user profile data:", error.message);
-          res
-            .status(500)
-            .json({ message: "Server error", error: error.message });
-        }
-      },
-    );
-
-    // Delete a post and its related votes and comments
-    app.delete(
-      "/posts/:postId",
-      verifyFirebaseAuth(userCollection, null, { requireApproved: true }),
-      async (req, res) => {
-        const { postId } = req.params;
-
-        try {
-          // Delete related votes first
-          await voteCollection.deleteMany({ postId });
-
-          // Delete related comments too
-          await commentCollection.deleteMany({ postId });
-
-          // Delete related comments too
-          await reportCollection.deleteMany({ postId });
-
-          // Then delete the post from the respective collection (posts, announcements, or notices)
-          const deleteResult = await Promise.all([
-            postCollection.deleteOne({ _id: new ObjectId(postId) }),
-            announcementCollection.deleteOne({ _id: new ObjectId(postId) }),
-            noticetCollection.deleteOne({ _id: new ObjectId(postId) }),
-          ]);
-
-          // Check if a post was deleted
-          const deleted = deleteResult.some(
-            (result) => result.deletedCount > 0,
-          );
-
-          if (deleted) {
-            res.status(200).json({
-              message: "Post, votes, and comments deleted successfully",
-            });
-          } else {
-            res.status(404).json({ message: "Post not found" });
-          }
-        } catch (error) {
-          console.error(
-            "Error deleting post, votes, and comments:",
-            error.message,
-          );
           res
             .status(500)
             .json({ message: "Server error", error: error.message });
@@ -1119,10 +1491,21 @@ async function connectToDatabase() {
           };
 
           const result = await commentCollection.insertOne(comment);
+          const userDoc = await userCollection.findOne({ email });
+          const commentPayload = serializeComment(
+            { ...comment, _id: result.insertedId },
+            userDoc,
+          );
+          io.to(`post:${postId}`).emit("comment:created", {
+            postId,
+            comment: commentPayload,
+            delta: 1,
+          });
 
           res.status(201).json({
             message: "Comment added successfully",
             commentId: result.insertedId,
+            comment: commentPayload,
           });
         } catch (error) {
           console.error("Error adding comment:", error.message);
@@ -1146,21 +1529,17 @@ async function connectToDatabase() {
             .sort({ createdAt: 1 })
             .toArray();
 
-          // Fetch user details for each comment
-          const commentsWithUserData = await Promise.all(
-            comments.map(async (comment) => {
-              const user = await userCollection.findOne({
-                email: comment.email,
-              });
-              return {
-                ...comment,
-                user: {
-                  name: user?.name,
-                  photo: user?.photo,
-                  user_type: user?.userType,
-                },
-              };
-            }),
+          const emails = [...new Set(comments.map((comment) => comment.email).filter(Boolean))];
+          const users = emails.length
+            ? await userCollection
+                .find({ email: { $in: emails } })
+                .project({ email: 1, name: 1, photo: 1, userType: 1 })
+                .toArray()
+            : [];
+          const userMap = new Map(users.map((user) => [user.email, user]));
+
+          const commentsWithUserData = comments.map((comment) =>
+            serializeComment(comment, userMap.get(comment.email)),
           );
 
           res.status(200).json(commentsWithUserData);
@@ -1210,8 +1589,17 @@ async function connectToDatabase() {
             { _id: new ObjectId(commentId) },
             { $set: { content: content.trim(), editedAt: new Date() } },
           );
+          const updatedComment = await commentCollection.findOne({
+            _id: new ObjectId(commentId),
+          });
+          const authorDoc = await userCollection.findOne({ email: comment.email });
+          const commentPayload = serializeComment(updatedComment, authorDoc);
+          io.to(`post:${comment.postId}`).emit("comment:updated", {
+            postId: comment.postId,
+            comment: commentPayload,
+          });
 
-          res.json({ message: "Comment updated successfully" });
+          res.json({ message: "Comment updated successfully", comment: commentPayload });
         } catch (error) {
           console.error("Error updating comment:", error.message);
           res
@@ -1509,6 +1897,8 @@ async function connectToDatabase() {
         const { postId } = req.params;
 
         try {
+          const postMeta = await resolvePostMeta(postId);
+
           // First delete all reports for this post
           await reportCollection.deleteMany({ postId });
 
@@ -1530,6 +1920,18 @@ async function connectToDatabase() {
           );
 
           if (deleted) {
+            const deletedType = postMeta?.postType || "general";
+            const payload = {
+              postId,
+              postType: deletedType,
+              email: postMeta?.email,
+            };
+
+            emitFeedEvent("post:deleted", payload, deletedType);
+            if (postMeta?.email) {
+              io.to(`user:${postMeta.email}`).emit("post:deleted", payload);
+            }
+
             res.status(200).json({
               message: "Post and all related data deleted successfully",
             });
@@ -1625,6 +2027,14 @@ async function connectToDatabase() {
             return res.status(404).json({ message: "Comment not found" });
           }
 
+          const payload = {
+            postId: comment.postId,
+            commentId,
+            delta: -1,
+          };
+
+          io.to(`post:${comment.postId}`).emit("comment:deleted", payload);
+
           res.json({ message: "Comment deleted successfully" });
         } catch (error) {
           console.error("Error deleting comment:", error.message);
@@ -1644,8 +2054,22 @@ async function connectToDatabase() {
         if (!ObjectId.isValid(commentId))
           return res.status(400).json({ message: "Invalid comment ID" });
 
+        const comment = await commentCollection.findOne({
+          _id: new ObjectId(commentId),
+        });
+
         await commentReportCollection.deleteMany({ commentId });
         await commentCollection.deleteOne({ _id: new ObjectId(commentId) });
+
+        if (comment?.postId) {
+          const payload = {
+            postId: comment.postId,
+            commentId,
+            delta: -1,
+          };
+
+          io.to(`post:${comment.postId}`).emit("comment:deleted", payload);
+        }
 
         res.json({ message: "Comment and reports deleted" });
       },
@@ -1735,7 +2159,7 @@ app.use((err, req, res, next) => {
   next();
 });
 
-app.listen(port, "0.0.0.0", () => {
+httpServer.listen(port, "0.0.0.0", () => {
   console.log(`simple crud is running on port ${port}`);
 });
 // module.exports = app;
