@@ -1,112 +1,152 @@
-# LinkCamp - Server
+# LinkCamp Server
+Backend API and realtime service for LinkCamp, a role-based campus community platform.
 
-🛡️ The backend power behind **LinkCamp**, providing secure authentication, admin moderation, cloud-based media management, and a fully role-based API system.
+## Companion Repository
+- Client (React Native + Expo): https://github.com/f-zaman-rafi/LinkCamp-with-React-Native
 
----
+## Overview
+LinkCamp Server provides:
+- Firebase token verification and role-aware access control
+- User onboarding and account state management (`pending`, `approved`, `blocked`)
+- Feed APIs for general posts, teacher announcements, and admin notices
+- Realtime updates via Socket.IO (posts, comments, votes, user updates)
+- Moderation workflows for post/comment reports
+- Cloudinary-powered image upload pipeline
 
-## 🚀 Features
+## Key Capabilities
+- Role-based API guards (`admin`, `teacher`, general user)
+- Approval gate for write actions (`ACCOUNT_PENDING` / `ACCOUNT_BLOCKED` responses)
+- Feed pagination with cursor support
+- Vote, comment, repost, and report systems
+- Admin tools for user verification and report triage
+- MongoDB indexes for hot feed/count queries
 
-- **User & Admin Authentication:**
-  - Dual JWT verification for user and admin roles.
-  - Firebase Authentication support.
+## Tech Stack
+- Node.js + Express
+- MongoDB Atlas (`mongodb` driver)
+- Firebase Admin SDK (ID token verification)
+- Socket.IO
+- Cloudinary + Multer (`multer-storage-cloudinary`)
+- CORS + dotenv
 
-- **Account Verification Workflow:**
-  - New student/teacher signups are pending until approved by an Admin.
+## API Surface (High Level)
+### Authentication and User
+- `POST /users`
+- `POST /login`
+- `POST /logout`
+- `GET /user/:email`
+- `PATCH /user/name`
+- `POST /user/upload-photo`
+- `PATCH /user/profile`
+- `GET /user/profile/:email`
 
-- **Profile Management:**
-  - First-time login triggers a profile creation (image + display name).
+### Feed and Content
+- `POST /user/post`
+- `GET /posts`
+- `GET /posts/:postId`
+- `PATCH /posts/:postId`
+- `DELETE /posts/:postId`
+- `POST /teacher/announcement`
+- `GET /teacher/announcements`
+- `POST /admin/notice`
+- `GET /admin/notices`
 
-- **Role-Based Content Control:**
-  - Admins can approve users, delete or dismiss reported posts.
+### Engagement
+- `POST /votes`
+- `GET /votes`
+- `GET /votes/:postId`
+- `GET /voteCounts`
+- `GET /commentCounts`
+- `GET /repostCounts`
+- `POST /comments`
+- `GET /comments/:postId`
+- `PATCH /comments/:commentId`
+- `DELETE /comments/:commentId`
 
-- **Post Management:**
-  - Create, edit, delete, report, comment
-  - Authority posts and teacher announcements have limited interaction to maintain content authenticity.
+### Moderation and Admin
+- `POST /reports`
+- `POST /comment-reports`
+- `GET /admin/reported-posts`
+- `DELETE /admin/reported-posts/:postId`
+- `DELETE /admin/reported-posts/:postId/dismiss`
+- `GET /admin/reported-comments`
+- `DELETE /admin/reported-comments/:commentId`
+- `DELETE /admin/reported-comments/:commentId/dismiss`
+- `GET /admin/users`
+- `GET /admin/users/:id`
+- `PATCH /admin/users/:id`
 
-- **Secure Image Uploads:**
-  - User-uploaded images are stored on Cloudinary via Multer middleware.
+## Socket.IO Events
+### Client -> Server
+- `feed:subscribe`
+- `feed:unsubscribe`
+- `post:join`
+- `post:leave`
 
-- **Error Handling:**
-  - Robust error messages and status codes for every API.
+### Server -> Client
+- `post:created`
+- `post:updated`
+- `post:deleted`
+- `comment:created`
+- `comment:updated`
+- `comment:deleted`
+- `vote:changed`
+- `repost:created`
+- `user:updated`
 
-- **Cross-Origin Support:**  
-  CORS enabled to communicate securely with the frontend.
+## Local Setup
+### Prerequisites
+- Node.js 18+ (Node 20 recommended)
+- npm
+- MongoDB Atlas cluster
+- Firebase project + service account credentials
+- Cloudinary account
 
----
-
-## ⚙️ Technologies Used
-
-- **Backend:** Node.js, Express.js
-- **Database:** MongoDB (Cloud Atlas)
-- **Authentication:** Firebase JWT, Cookie Parser
-- **Image Upload:** Multer, Cloudinary, Multer-Storage-Cloudinary
-- **Security:** Bcrypt, Environment Variables
-- **Deployment:** Render / Railway / Your own server
-
----
-
-## 📦 Installation
-
+### 1) Install dependencies
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/linkcamp-server.git
-
-# Navigate to project folder
-cd linkcamp-server
-
-# Install dependencies
 npm install
-
-# Create .env file and add:
-# CLOUDINARY_CLOUD_NAME=
-# CLOUDINARY_API_KEY=
-# CLOUDINARY_API_SECRET=
-# ACCESS_TOKEN_SECRET=
-# MONGO_URI=
-
-# Run server
-npm start
-
----
-
-## 🧠 Smart Practices Used
-
-- **Separate Middlewares** for User and Admin JWT validation
-- **Cookie-Based Authentication** with Secure Flag
-- **Cloudinary Integration** via Multer
-- **Modular Routing** for Clean Structure
-- **Custom Error and Access Control Handling**
-
----
-
-## 📄 API Endpoints Overview
-
-| Method | Endpoint | Description |
-|:------:|:--------:|:-----------:|
-| POST | /signup | Student/Teacher account registration |
-| POST | /login | User authentication |
-| GET | /posts | Fetch all posts |
-| POST | /posts | Create a new post |
-| PATCH | /posts/:id | Report a post |
-| DELETE | /posts/:id | Delete a post (admin/user) |
-| POST | /profile | Complete profile info |
-| GET | /reports | Admin fetch reported posts |
-| PATCH | /reports/:id/dismiss | Admin dismiss report |
-| DELETE | /reports/:id | Admin delete reported post |
-
-> _(Full API documentation coming soon.)_
-
----
-
-## ✨ Credits
-
-Backend crafted with ❤️ by **SK Fariduzzaman Rafi**.
-
----
-
-## 📄 License
-
-This project is licensed under the **MIT License**.
 ```
 
----
+### 2) Configure environment
+Create `.env` in the project root:
+
+```env
+PORT=5001
+
+DB_USER=your_db_username
+DB_PASS=your_db_password
+
+FIREBASE_PROJECT_ID=your_firebase_project_id
+FIREBASE_CLIENT_EMAIL=your_service_account_email
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_cloudinary_api_key
+CLOUDINARY_API_SECRET=your_cloudinary_api_secret
+```
+
+### 3) Run
+```bash
+# development (nodemon)
+npm run dev
+
+# production-like
+npm start
+```
+
+Server default URL: `http://localhost:5001`
+
+## Scripts
+- `npm run dev` -> start with nodemon
+- `npm start` -> start with Node.js
+
+## Project Notes
+- API routes are currently defined on `app` in `index.js`.
+- CORS is restricted by `allowedOrigins`; update it for your frontend domains.
+- This service is designed for persistent connections (Socket.IO), so deployment targets should support WebSockets.
+
+## What This Demonstrates (Recruiter View)
+- End-to-end backend design for a realtime social/community app
+- Practical RBAC and moderation workflows
+- Cloud media handling and secure token-based API access
+- Production-oriented concerns: pagination, indexing, and event-driven updates
