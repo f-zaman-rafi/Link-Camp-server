@@ -157,7 +157,14 @@ async function connectToDatabase() {
 
     const parseIdsParam = (rawIds) => {
       if (!rawIds || typeof rawIds !== "string") return [];
-      return [...new Set(rawIds.split(",").map((id) => id.trim()).filter(Boolean))];
+      return [
+        ...new Set(
+          rawIds
+            .split(",")
+            .map((id) => id.trim())
+            .filter(Boolean),
+        ),
+      ];
     };
 
     const toUserPublic = (user) =>
@@ -171,7 +178,9 @@ async function connectToDatabase() {
 
     const attachUsersToPosts = async (items) => {
       if (!items?.length) return [];
-      const emails = [...new Set(items.map((post) => post.email).filter(Boolean))];
+      const emails = [
+        ...new Set(items.map((post) => post.email).filter(Boolean)),
+      ];
       if (!emails.length) return items;
 
       const users = await userCollection
@@ -280,8 +289,7 @@ async function connectToDatabase() {
         userType: userDoc.userType || null,
       };
 
-      io
-        .to("feed:all")
+      io.to("feed:all")
         .to("feed:teacher")
         .to("feed:admin")
         .to(`user:${userDoc.email}`)
@@ -295,13 +303,21 @@ async function connectToDatabase() {
       }
 
       socket.on("feed:subscribe", (feedType) => {
-        if (feedType === "all" || feedType === "teacher" || feedType === "admin") {
+        if (
+          feedType === "all" ||
+          feedType === "teacher" ||
+          feedType === "admin"
+        ) {
           socket.join(`feed:${feedType}`);
         }
       });
 
       socket.on("feed:unsubscribe", (feedType) => {
-        if (feedType === "all" || feedType === "teacher" || feedType === "admin") {
+        if (
+          feedType === "all" ||
+          feedType === "teacher" ||
+          feedType === "admin"
+        ) {
           socket.leave(`feed:${feedType}`);
         }
       });
@@ -637,7 +653,11 @@ async function connectToDatabase() {
             "general",
           );
 
-          emitFeedEvent("post:created", { post: createdPost }, createdPost.postType);
+          emitFeedEvent(
+            "post:created",
+            { post: createdPost },
+            createdPost.postType,
+          );
 
           if (createdPost.repostOf) {
             emitFeedEvent(
@@ -798,7 +818,9 @@ async function connectToDatabase() {
         const combinedData = await attachUsersToPosts(posts);
 
         if (paginated) {
-          return res.status(200).json(buildPaginatedResponse(combinedData, limit));
+          return res
+            .status(200)
+            .json(buildPaginatedResponse(combinedData, limit));
         }
 
         res.status(200).json(combinedData);
@@ -906,8 +928,12 @@ async function connectToDatabase() {
             { $set: update },
           );
 
-          const updatedPost = await targetCol.findOne({ _id: new ObjectId(postId) });
-          const refreshedUserDoc = await userCollection.findOne({ email: post.email });
+          const updatedPost = await targetCol.findOne({
+            _id: new ObjectId(postId),
+          });
+          const refreshedUserDoc = await userCollection.findOne({
+            email: post.email,
+          });
           const fallbackType =
             targetCol === announcementCollection
               ? "teacher"
@@ -920,10 +946,16 @@ async function connectToDatabase() {
             fallbackType,
           );
 
-          emitFeedEvent("post:updated", { post: updatedPayload }, updatedPayload.postType);
+          emitFeedEvent(
+            "post:updated",
+            { post: updatedPayload },
+            updatedPayload.postType,
+          );
 
           if (post.email) {
-            io.to(`user:${post.email}`).emit("post:updated", { post: updatedPayload });
+            io.to(`user:${post.email}`).emit("post:updated", {
+              post: updatedPayload,
+            });
           }
 
           res.status(200).json({ message: "Post updated successfully" });
@@ -1025,7 +1057,9 @@ async function connectToDatabase() {
           const { paginated, limit, cursor } = parsePagination(req.query);
           const baseFilter = cursor ? { createdAt: { $lt: cursor } } : {};
 
-          let annQuery = announcementCollection.find(baseFilter).sort({ createdAt: -1 });
+          let annQuery = announcementCollection
+            .find(baseFilter)
+            .sort({ createdAt: -1 });
           let typedPostQuery = postCollection
             .find({ ...baseFilter, postType: "teacher" })
             .sort({ createdAt: -1 });
@@ -1055,7 +1089,9 @@ async function connectToDatabase() {
           const combinedData = await attachUsersToPosts(normalized);
 
           if (paginated) {
-            return res.status(200).json(buildPaginatedResponse(combinedData, limit));
+            return res
+              .status(200)
+              .json(buildPaginatedResponse(combinedData, limit));
           }
 
           res.status(200).json(combinedData);
@@ -1078,7 +1114,9 @@ async function connectToDatabase() {
           const { paginated, limit, cursor } = parsePagination(req.query);
           const baseFilter = cursor ? { createdAt: { $lt: cursor } } : {};
 
-          let noticeQuery = noticetCollection.find(baseFilter).sort({ createdAt: -1 });
+          let noticeQuery = noticetCollection
+            .find(baseFilter)
+            .sort({ createdAt: -1 });
           let typedPostQuery = postCollection
             .find({ ...baseFilter, postType: "admin" })
             .sort({ createdAt: -1 });
@@ -1108,7 +1146,9 @@ async function connectToDatabase() {
           const combinedData = await attachUsersToPosts(normalized);
 
           if (paginated) {
-            return res.status(200).json(buildPaginatedResponse(combinedData, limit));
+            return res
+              .status(200)
+              .json(buildPaginatedResponse(combinedData, limit));
           }
 
           res.status(200).json(combinedData);
@@ -1270,9 +1310,7 @@ async function connectToDatabase() {
             },
           });
 
-          const voteCounts = await voteCollection
-            .aggregate(pipeline)
-            .toArray();
+          const voteCounts = await voteCollection.aggregate(pipeline).toArray();
 
           res.status(200).json(voteCounts);
         } catch (error) {
@@ -1299,9 +1337,7 @@ async function connectToDatabase() {
 
           pipeline.push({ $group: { _id: "$postId", count: { $sum: 1 } } });
 
-          const counts = await commentCollection
-            .aggregate(pipeline)
-            .toArray();
+          const counts = await commentCollection.aggregate(pipeline).toArray();
 
           res.status(200).json(counts);
         } catch (error) {
@@ -1359,7 +1395,11 @@ async function connectToDatabase() {
 
           const [posts, announcements, notices] = await Promise.all([
             queryLimit
-              ? postCollection.find(filter).sort({ createdAt: -1 }).limit(queryLimit).toArray()
+              ? postCollection
+                  .find(filter)
+                  .sort({ createdAt: -1 })
+                  .limit(queryLimit)
+                  .toArray()
               : postCollection.find(filter).sort({ createdAt: -1 }).toArray(),
             queryLimit
               ? announcementCollection
@@ -1372,8 +1412,15 @@ async function connectToDatabase() {
                   .sort({ createdAt: -1 })
                   .toArray(),
             queryLimit
-              ? noticetCollection.find(filter).sort({ createdAt: -1 }).limit(queryLimit).toArray()
-              : noticetCollection.find(filter).sort({ createdAt: -1 }).toArray(),
+              ? noticetCollection
+                  .find(filter)
+                  .sort({ createdAt: -1 })
+                  .limit(queryLimit)
+                  .toArray()
+              : noticetCollection
+                  .find(filter)
+                  .sort({ createdAt: -1 })
+                  .toArray(),
           ]);
 
           const allPosts = [
@@ -1457,7 +1504,9 @@ async function connectToDatabase() {
 
           if (paginated) {
             const pageItems = combined.slice(0, limit);
-            return res.status(200).json(buildPaginatedResponse(pageItems, limit));
+            return res
+              .status(200)
+              .json(buildPaginatedResponse(pageItems, limit));
           }
 
           res.status(200).json(combined);
@@ -1529,7 +1578,11 @@ async function connectToDatabase() {
             .sort({ createdAt: 1 })
             .toArray();
 
-          const emails = [...new Set(comments.map((comment) => comment.email).filter(Boolean))];
+          const emails = [
+            ...new Set(
+              comments.map((comment) => comment.email).filter(Boolean),
+            ),
+          ];
           const users = emails.length
             ? await userCollection
                 .find({ email: { $in: emails } })
@@ -1592,14 +1645,19 @@ async function connectToDatabase() {
           const updatedComment = await commentCollection.findOne({
             _id: new ObjectId(commentId),
           });
-          const authorDoc = await userCollection.findOne({ email: comment.email });
+          const authorDoc = await userCollection.findOne({
+            email: comment.email,
+          });
           const commentPayload = serializeComment(updatedComment, authorDoc);
           io.to(`post:${comment.postId}`).emit("comment:updated", {
             postId: comment.postId,
             comment: commentPayload,
           });
 
-          res.json({ message: "Comment updated successfully", comment: commentPayload });
+          res.json({
+            message: "Comment updated successfully",
+            comment: commentPayload,
+          });
         } catch (error) {
           console.error("Error updating comment:", error.message);
           res
@@ -2144,7 +2202,7 @@ app.get("/", (req, res) => {
         <div class="container">
           <h1>🚨 Whoa, looks like you accidentally stumbled into the server side!</h1>
           <p>Don't worry, it's safe here... but head back to the campus home at 
-          <a href="https://link-camp.netlify.app" target="_blank">LinkCamp</a> to catch up with the campus buzz! 😎📚</p>
+          <a href="https://linkcamp.vercel.app" target="_blank">LinkCamp</a> to catch up with the campus buzz! 😎📚</p>
         </div>
       </body>
     </html>
